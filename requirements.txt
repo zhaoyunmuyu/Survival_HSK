@@ -1,0 +1,14 @@
+# 项目运行与数据处理所需的最小依赖
+# 已包含 Mamba 教师模型依赖（mamba-ssm）。建议在 Linux/GPU 环境安装；Windows/CPU 下可能无法编译。
+torch==2.7.1
+# pandas/pyarrow 等 wheel 多为 NumPy 1.x 编译，锁定 <2 避免二进制不兼容。
+numpy>=1.26.4,<2
+pandas==2.3.3
+pyarrow==21.0.0
+scikit-learn==1.7.1
+scipy==1.15.3
+tqdm==4.67.1
+PyYAML==6.0.2
+
+# Mamba 教师模型（建议 Linux/GPU 环境）
+mamba-ssm; platform_system != "Windows"
