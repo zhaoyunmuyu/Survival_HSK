@@ -19,12 +19,12 @@ from sklearn.model_selection import train_test_split
 from torch.utils.data import DataLoader
 import pyarrow.parquet as pq
 
-from survival.utils.seed import build_generator, seed_everything, seed_worker
+from survival_st_gcn.utils.seed import build_generator, seed_everything, seed_worker
 from survival_new_data.kd.data.reviews import build_restaurant_review_cache, prepare_review_dataframe
 from survival_new_data.kd.data.datasets import RestaurantDatasetKD
-from survival.data.text_vectors import build_text_vector_map
-from survival.data.macro import prepare_macro_data
-from survival.utils.paths import resolve_data_file, resolve_data_dir
+from survival_st_gcn.data.text_vectors import build_text_vector_map
+from survival_st_gcn.data.macro import prepare_macro_data
+from survival_st_gcn.utils.paths import resolve_data_file, resolve_data_dir
 
 LOGGER = logging.getLogger(__name__)
 

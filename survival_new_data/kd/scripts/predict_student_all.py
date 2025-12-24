@@ -1,7 +1,7 @@
 """批量使用学生模型为所有餐厅按年份预测死亡概率，并导出 CSV。
 
 用法示例：
-  python -m survival_hsk.kd.scripts.predict_student_all ^
+  python -m survival_new_data.kd.scripts.predict_student_all ^
       --checkpoint checkpoints_kd/student_best.pt ^
       --hidden-dim 512 ^
       --output student_all_yearly_probs.csv
@@ -29,13 +29,13 @@ try:
 except Exception:  # pragma: no cover - 图形依赖可选
     plt = None  # type: ignore[assignment]
 
-from survival.utils.constants import REGION_MAPPING
-from survival.utils.paths import resolve_data_file, resolve_data_dir
+from survival_st_gcn.utils.constants import REGION_MAPPING
+from survival_st_gcn.utils.paths import resolve_data_file, resolve_data_dir
 from survival_new_data.kd.data.reviews import build_restaurant_review_cache, prepare_review_dataframe
 from survival_new_data.kd.models.bilstm_student import BiLSTMStudent
 from survival_new_data.kd.calibration import LogitCalibrator
-from survival.data.text_vectors import build_text_vector_map
-from survival.data.macro import prepare_macro_data
+from survival_st_gcn.data.text_vectors import build_text_vector_map
+from survival_st_gcn.data.macro import prepare_macro_data
 
 
 def _resolve_data_file_local(filename: str) -> str:

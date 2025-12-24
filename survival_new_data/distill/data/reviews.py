@@ -1,8 +1,8 @@
 """评论数据预处理与餐厅级缓存构建（对接 survival_hsk/data）
 
 约定输入：
-- reviews_clean.parquet: 每条评论粒度的清洗表（来源：survival_hsk/preprocess/build_reviews_clean.py）
-- review_bert_emb.parquet: 每条评论对应的 BERT 向量（来源：survival_hsk/preprocess/build_review_bert_emb.py）
+- reviews_clean.parquet: 每条评论粒度的清洗表（来源：survival_new_data/preprocess/build_reviews_clean.py）
+- review_bert_emb.parquet: 每条评论对应的 BERT 向量（来源：survival_new_data/preprocess/build_review_bert_emb.py）
 
 输出（缓存）字段：
 - text: [L, text_dim]

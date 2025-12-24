@@ -1,7 +1,7 @@
 """训练学生模型（HSK distill 迁移版）。
 
 运行示例：
-  python -m survival_hsk.distill.scripts.train_student --teacher-checkpoint checkpoints_hsk_distill/teacher_best.pt
+  python -m survival_new_data.distill.scripts.train_student --teacher-checkpoint checkpoints_hsk_distill/teacher_best.pt
 """
 
 from __future__ import annotations

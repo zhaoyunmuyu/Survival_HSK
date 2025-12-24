@@ -9,7 +9,7 @@
 ## 1. `restaurant_base.parquet` / `restaurant_base.csv`
 
 > 来源：`openrice/时间标签/整合餐厅信息_rating_survive_fillna_refreshed.csv`  
-> 生成脚本：`survival_hsk/preprocess/build_restaurant_base.py`
+> 生成脚本：`survival_new_data/preprocess/build_restaurant_base.py`
 
 ### 1.1 粒度与行数
 
@@ -92,7 +92,7 @@
 ## 2. `reviews_agg_by_restaurant.parquet` / `reviews_agg_by_restaurant.csv`
 
 > 来源：`openrice/整合餐厅评论信息.csv`  
-> 生成脚本：`survival_hsk/preprocess/build_reviews_agg.py`
+> 生成脚本：`survival_new_data/preprocess/build_reviews_agg.py`
 
 ### 2.1 粒度与行数
 
@@ -169,7 +169,7 @@
 ## 3. `reviews_clean.parquet` / `reviews_clean.csv`
 
 > 来源：`openrice/整合餐厅评论信息.csv`  
-> 生成脚本：`survival_hsk/preprocess/build_reviews_clean.py`
+> 生成脚本：`survival_new_data/preprocess/build_reviews_clean.py`
 
 ### 3.1 粒度与行数
 

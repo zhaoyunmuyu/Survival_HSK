@@ -18,8 +18,8 @@ import torch.nn as nn
 import torch.optim as optim
 from sklearn.metrics import accuracy_score, balanced_accuracy_score, f1_score, precision_score, recall_score, roc_auc_score
 
-from survival.training.losses import BinaryFocalLoss
-from survival.utils.logging import setup_logging
+from survival_st_gcn.training.losses import BinaryFocalLoss
+from survival_st_gcn.utils.logging import setup_logging
 
 
 class LogitCalibrator(nn.Module):
@@ -228,4 +228,3 @@ def train_logit_calibrator(
         calibrator.load_state_dict(best_state["state"])  # type: ignore[arg-type]
 
     return calibrator, history
-

@@ -21,7 +21,7 @@ import pandas as pd
 from sklearn.model_selection import train_test_split
 from torch.utils.data import DataLoader
 
-from survival.utils.seed import build_generator, seed_everything, seed_worker
+from survival_st_gcn.utils.seed import build_generator, seed_everything, seed_worker
 from survival_new_data.distill.data.datasets import RestaurantDatasetDistill
 from survival_new_data.distill.data.reviews import (
     build_bert_vector_map,

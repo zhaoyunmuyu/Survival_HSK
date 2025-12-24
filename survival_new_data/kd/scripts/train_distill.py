@@ -2,12 +2,12 @@
 
 用法示例：
 - 教师阶段：
-  python -m survival_hsk.kd.scripts.train_distill --stage teacher --epochs 10 --batch-size 64
+  python -m survival_new_data.kd.scripts.train_distill --stage teacher --epochs 10 --batch-size 64
 - 学生阶段：
-  python -m survival_hsk.kd.scripts.train_distill --stage student --teacher-checkpoint checkpoints_kd/teacher_best.pt --epochs 10
+  python -m survival_new_data.kd.scripts.train_distill --stage student --teacher-checkpoint checkpoints_kd/teacher_best.pt --epochs 10
 
 说明：
-- 本脚本依赖 survival_hsk.kd.data.loaders.prepare_dataloaders_kd 构建数据；
+- 本脚本依赖 survival_new_data.kd.data.loaders.prepare_dataloaders_kd 构建数据；
 - 不使用图结构数据；
 - 注释为中文，便于快速理解与二次开发。
 """

@@ -1,7 +1,7 @@
 """训练教师模型（HSK distill 迁移版）。
 
 运行示例：
-  python -m survival_hsk.distill.scripts.train_teacher --epochs 10 --batch-size 64
+  python -m survival_new_data.distill.scripts.train_teacher --epochs 10 --batch-size 64
 """
 
 from __future__ import annotations

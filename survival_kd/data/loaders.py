@@ -48,8 +48,19 @@ def _read_parquet_df(path: str) -> pd.DataFrame:
     return table.to_pandas()
 
 
-def prepare_dataloaders_kd(batch_size: int = 64, limit_restaurants: int | None = None) -> Dict[str, Any]:
-    """创建蒸馏版 train/val/test DataLoader（不带图结构，但包含图片特征）。"""
+def prepare_dataloaders_kd(
+    batch_size: int = 64,
+    limit_restaurants: int | None = None,
+    *,
+    downsample_train_open: bool = True,
+) -> Dict[str, Any]:
+    """创建蒸馏版 train/val/test DataLoader（不带图结构，但包含图片特征）。
+
+    注意：
+    - 训练默认会对 `is_open==1`（仍营业）做下采样以控制类别比例；
+    - 若你需要让输出 sigmoid 更接近“真实人群先验概率”（例如训练标定层），可将
+      `downsample_train_open=False`。
+    """
     seed_everything()
     LOGGER.info("[KD] Loading restaurant data ...")
     restaurant_df = _read_parquet_df(_resolve_data_file("restaurant_data.parquet"))
@@ -71,13 +82,14 @@ def prepare_dataloaders_kd(batch_size: int = 64, limit_restaurants: int | None =
         stratify=temp_df[label_col],
     )
 
-    # 下采样控制 pos:neg<=1:1
-    train_pos = train_df[train_df[label_col] == 1]
-    train_neg = train_df[train_df[label_col] == 0]
-    max_pos_allowed = 1 * len(train_neg)
-    if len(train_pos) > max_pos_allowed:
-        train_pos = train_pos.sample(n=max_pos_allowed, random_state=42)
-        train_df = pd.concat([train_pos, train_neg], ignore_index=True).sample(frac=1, random_state=42)
+    if downsample_train_open:
+        # 下采样控制 pos:neg<=1:1（这里 pos 指 is_open==1，即“仍营业”）
+        train_pos = train_df[train_df[label_col] == 1]
+        train_neg = train_df[train_df[label_col] == 0]
+        max_pos_allowed = 1 * len(train_neg)
+        if len(train_pos) > max_pos_allowed:
+            train_pos = train_pos.sample(n=max_pos_allowed, random_state=42)
+            train_df = pd.concat([train_pos, train_neg], ignore_index=True).sample(frac=1, random_state=42)
 
     LOGGER.info("[KD] Loading review data ...")
     review_df = _read_parquet_df(_resolve_data_file("review_data.parquet"))
@@ -157,4 +169,3 @@ def prepare_dataloaders_kd(batch_size: int = 64, limit_restaurants: int | None =
         "val_loader": val_loader,
         "test_loader": test_loader,
     }
-

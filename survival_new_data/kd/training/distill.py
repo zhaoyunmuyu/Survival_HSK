@@ -25,9 +25,9 @@ from sklearn.metrics import (
 )
 from tqdm import tqdm
 
-from survival.utils.logging import setup_logging
-from survival.utils.seed import seed_everything
-from survival.training.losses import BinaryFocalLoss
+from survival_st_gcn.utils.logging import setup_logging
+from survival_st_gcn.utils.seed import seed_everything
+from survival_st_gcn.training.losses import BinaryFocalLoss
 
 
 def _move_batch_to_device(batch: Dict[str, Any], device: torch.device) -> None:
@@ -296,4 +296,3 @@ def train_student_distill(
     if best_state is not None:
         student.load_state_dict(best_state["state"])  # type: ignore[arg-type]
     return student, history
-

@@ -213,3 +213,6 @@ preprocessed_data_cache/
 checkpoints*/
 logs*/
 training_history.npy
+
+restaurant_data.parquet
+review_data.parquet

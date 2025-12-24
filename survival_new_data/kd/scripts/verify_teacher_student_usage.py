@@ -4,7 +4,7 @@
 - 教师：使用所有非 padding 的时间步；
 - 学生：仅使用“最后两年”的时间步（其余视为 padding 屏蔽）；
 
-运行：  python -m survival_hsk.kd.scripts.verify_teacher_student_usage
+运行：  python -m survival_new_data.kd.scripts.verify_teacher_student_usage
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ import torch
 from survival_new_data.kd.data.loaders import prepare_dataloaders_kd
 from survival_new_data.kd.models.mamba_teacher import MambaTeacher
 from survival_new_data.kd.models.bilstm_student import BiLSTMStudent
-from survival.training.losses import BinaryFocalLoss
+from survival_st_gcn.training.losses import BinaryFocalLoss
 
 
 def _padding_mask_from_batch(batch: Dict[str, torch.Tensor]) -> torch.Tensor:

@@ -23,7 +23,7 @@ def get_project_root() -> Path:
     """
     返回项目根目录（包含 `openrice/` 的文件夹）。
 
-    脚本可能位于多级子目录（例如 `survival_hsk/preprocess`），
+    脚本可能位于多级子目录（例如 `survival_new_data/preprocess`），
     因此这里自下而上查找，直到找到包含 `openrice/` 的目录。
     """
     current = Path(__file__).resolve()

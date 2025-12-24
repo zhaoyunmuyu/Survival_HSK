@@ -5,7 +5,7 @@
 - 这不是严格意义的 hazard（除非训练目标就是 hazard），但可用于“真实逐 period 推理”（不插值）。
 
 运行示例：
-  python -m survival_hsk.distill.scripts.predict_curve ^
+  python -m survival_new_data.distill.scripts.predict_curve ^
       --restaurant-id 123456 ^
       --model student ^
       --checkpoint checkpoints_hsk_distill/student_best.pt ^
@@ -335,4 +335,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

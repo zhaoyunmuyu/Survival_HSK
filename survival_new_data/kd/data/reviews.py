@@ -16,7 +16,7 @@ import pandas as pd
 import torch
 from tqdm import tqdm
 
-from survival.utils.constants import (
+from survival_st_gcn.utils.constants import (
     IMAGE_VECTOR_DIM,
     MAX_REVIEW_PHOTOS,
     MAX_REVIEWS_PER_RESTAURANT,
@@ -218,4 +218,3 @@ def build_restaurant_review_cache(
         missing_image_counter,
     )
     return restaurant_reviews
-

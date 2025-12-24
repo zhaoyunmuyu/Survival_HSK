@@ -42,7 +42,7 @@ def get_project_root() -> Path:
     for parent in current.parents:
         if (parent / "openrice").is_dir():
             return parent
-    # 兜底：假设当前文件位于 <root>/survival_hsk/preprocess/
+    # 兜底：假设当前文件位于 <root>/survival_new_data/preprocess/
     return current.parents[2]
 
 
@@ -384,6 +384,5 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
 
 

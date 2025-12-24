@@ -6,7 +6,7 @@ from __future__ import annotations
 - 目标：整体压低误报的死亡概率，并拉大正负样本（死亡/存活）之间的概率差异。
 
 示例：
-  python -m survival_hsk.kd.scripts.train_calibrator ^
+  python -m survival_new_data.kd.scripts.train_calibrator ^
       --student-checkpoint checkpoints_kd/student_best.pt ^
       --hidden-dim 512 ^
       --epochs 5 ^

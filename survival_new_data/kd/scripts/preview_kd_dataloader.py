@@ -1,8 +1,8 @@
 """
 创建蒸馏版 DataLoader 并查看一条样例
-- 使用 survival_hsk.kd.data.loaders.prepare_dataloaders_kd（不加载图数据）
+- 使用 survival_new_data.kd.data.loaders.prepare_dataloaders_kd（不加载图数据）
 - 打印 train/val/test 样本数与第一条样例字段形状
-运行：  python -m survival_hsk.kd.scripts.preview_kd_dataloader
+运行：  python -m survival_new_data.kd.scripts.preview_kd_dataloader
 """
 
 from __future__ import annotations

@@ -21,7 +21,7 @@ import pandas as pd
 import torch
 from torch.utils.data import Dataset
 
-from survival.utils.constants import (
+from survival_st_gcn.utils.constants import (
     MAX_REVIEWS_PER_RESTAURANT,
     REGION_MAPPING,
     REVIEW_FEATURE_DIM,

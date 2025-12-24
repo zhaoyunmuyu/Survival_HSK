@@ -1,7 +1,7 @@
 """预览 distill DataLoader 的 batch 结构与形状。
 
 运行：
-  python -m survival_hsk.distill.scripts.preview_batch
+  python -m survival_new_data.distill.scripts.preview_batch
 """
 
 from __future__ import annotations

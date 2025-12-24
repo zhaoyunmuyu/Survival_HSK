@@ -10,6 +10,8 @@
 - 对 restaurant_data.parquet 中的每一家餐厅，结合其所有评论与宏观数据；
 - 对该餐厅所有评论年份（可用 --min-year/--max-year 限制）逐年构造样本，
   使用学生模型预测“死亡概率”（训练时目标为 1 - is_open）；
+- 注意：训练标签 is_open 是“当前是否仍在营业”，不是逐年生存/死亡标签；因此这里的“按年份”
+  主要是改变 reference_year/last2_mask 的构造方式，更适合做相对比较与趋势观察。
 - 结果保存为 CSV：列包括 restaurant_id, year, eval_year, pred_death_prob 等。
 """
 
@@ -58,6 +60,9 @@ def _build_batch_for_year(
     macro_data: Dict[str, Dict[int, torch.Tensor]],
     macro_default: torch.Tensor,
     region_key: str | None,
+    *,
+    history_mode: str = "all",
+    history_years: int = 2,
 ) -> Dict[str, torch.Tensor]:
     text = reviews["text"]
     images = reviews["images"]
@@ -65,7 +70,15 @@ def _build_batch_for_year(
     years_tensor = reviews["years"].long()
 
     # 防止“未来评论泄露”：只允许使用 <= 当前评估 year 的历史评论
-    last2 = (years_tensor <= year) & (years_tensor >= (year - 1)) & (years_tensor > 0)
+    if history_mode == "last2":
+        last2 = (years_tensor <= year) & (years_tensor >= (year - 1)) & (years_tensor > 0)
+    elif history_mode == "all":
+        last2 = (years_tensor <= year) & (years_tensor > 0)
+    elif history_mode == "years":
+        win = max(1, int(history_years))
+        last2 = (years_tensor <= year) & (years_tensor >= (year - (win - 1))) & (years_tensor > 0)
+    else:
+        raise ValueError(f"Unknown history_mode: {history_mode!r}")
 
     region_macro = macro_data.get(region_key, {}) if region_key else {}
     macro_feat = region_macro.get(year, macro_default)
@@ -141,6 +154,19 @@ def parse_args() -> argparse.Namespace:
         default="year",
         help="输出 CSV 时的时间粒度：按年 / 半年 / 季度（半年/季度通过在 eval_year 上线性插值获得）",
     )
+    parser.add_argument(
+        "--history",
+        type=str,
+        choices=["all", "last2", "years"],
+        default="all",
+        help="构造 last2_mask（学生模型保留的历史评论范围）：all=截至该年的全部历史；last2=仅当年+前一年；years=最近N年",
+    )
+    parser.add_argument(
+        "--history-years",
+        type=int,
+        default=2,
+        help="当 --history=years 时生效：使用最近 N 年（含当年）",
+    )
     return parser.parse_args()
 
 
@@ -192,6 +218,12 @@ def _plot_restaurant_curve(
 
 def main() -> None:
     args = parse_args()
+
+    if args.time_shift_years:
+        print(
+            "[Note] --time-shift-years 仅用于输出/绘图的横轴平移；"
+            "模型输入仍使用 year 作为 reference_year，并按该年选择 last2 评论与 macro 年份。"
+        )
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     if not os.path.exists(args.checkpoint):
@@ -271,7 +303,16 @@ def main() -> None:
 
         with torch.no_grad():
             for year in range(start_year, end_year + 1):
-                batch = _build_batch_for_year(year, reviews, macro_data, macro_default, region_key)
+                batch = _build_batch_for_year(
+                    year,
+                    reviews,
+                    macro_data,
+                    macro_default,
+                    region_key,
+                    history_mode=args.history,
+                    history_years=args.history_years,
+                )
+                n_last2 = int(batch["last2_mask"].sum().item())
                 for key, value in batch.items():
                     batch[key] = value.to(device)
                 logits = student(batch)
@@ -287,6 +328,7 @@ def main() -> None:
                         "year": year,
                         "eval_year": year + args.time_shift_years,
                         "pred_death_prob": float(prob),
+                        "n_last2_reviews": int(n_last2),
                     }
                 )
 

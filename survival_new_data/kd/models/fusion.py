@@ -14,7 +14,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from survival.utils.constants import TEXT_VECTOR_DIM, IMAGE_VECTOR_DIM, REVIEW_FEATURE_DIM
+from survival_st_gcn.utils.constants import TEXT_VECTOR_DIM, IMAGE_VECTOR_DIM, REVIEW_FEATURE_DIM
 
 
 class TokenBuilder(nn.Module):
@@ -79,4 +79,3 @@ class TokenBuilder(nn.Module):
 
         padding_mask = self._build_padding_mask(text, images)
         return tokens, padding_mask
-

@@ -101,7 +101,11 @@ def main() -> None:
     if not os.path.exists(args.student_checkpoint):
         raise FileNotFoundError(f"Student checkpoint not found: {args.student_checkpoint}")
 
-    loaders = prepare_dataloaders_kd(batch_size=args.batch_size, limit_restaurants=args.limit_restaurants)
+    loaders = prepare_dataloaders_kd(
+        batch_size=args.batch_size,
+        limit_restaurants=args.limit_restaurants,
+        downsample_train_open=False,
+    )
     train_loader = loaders["train_loader"]
     val_loader = loaders["val_loader"]
 
@@ -126,4 +130,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
