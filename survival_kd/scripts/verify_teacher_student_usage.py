@@ -57,7 +57,7 @@ def main() -> None:
     for k, v in batch.items():
         if isinstance(v, torch.Tensor):
             batch[k] = v.to(device)
-    labels = (1.0 - batch["is_open"]).float().view(-1, 1)
+    labels = batch["is_open"].float().view(-1, 1)
 
     teacher.train()
     t_out = teacher(batch)
@@ -85,4 +85,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

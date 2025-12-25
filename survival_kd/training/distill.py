@@ -36,6 +36,35 @@ def _move_batch_to_device(batch: Dict[str, Any], device: torch.device) -> None:
             batch[k] = v.to(device)
 
 
+def _targets_from_batch(batch: Dict[str, Any]) -> torch.Tensor:
+    """构造二分类目标：1=仍营业(is_open)，0=关店。"""
+    if "is_open" not in batch:
+        raise KeyError("Batch missing key: is_open")
+    is_open = batch["is_open"]
+    return is_open.float().view(-1, 1)
+
+
+def _extract_restaurant_ids(batch: Dict[str, Any]) -> list[int]:
+    ids = batch.get("restaurant_id")
+    if not isinstance(ids, torch.Tensor):
+        return []
+    arr = ids.detach().cpu().view(-1).numpy()
+    out: list[int] = []
+    for x in arr.tolist():
+        try:
+            out.append(int(x))
+        except Exception:
+            continue
+    return out
+
+
+def _dump_ids(path: str, ids: set[int]) -> None:
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    with open(path, "w", encoding="utf-8") as handle:
+        for rid in sorted(ids):
+            handle.write(f"{rid}\n")
+
+
 def _smooth_labels(labels: torch.Tensor, p: float = 0.1) -> torch.Tensor:
     # 与旧版一致：0.1/0.8，合并成参数 p（对正/负同向平滑）
     return labels * (1.0 - 2 * p) + p
@@ -83,6 +112,7 @@ def train_teacher(
     log_dir: str = "logs_kd",
     log_filename: str = "teacher.log",
     checkpoint_dir: str = "checkpoints_kd",
+    id_log_dir: str | None = None,
     max_train_steps: Optional[int] = None,
     max_val_steps: Optional[int] = None,
     max_test_steps: Optional[int] = None,
@@ -104,12 +134,13 @@ def train_teacher(
         model.train()
         train_probs, train_labels = [], []
         total_loss = 0.0
+        seen_ids: set[int] = set()
 
         pbar = tqdm(train_loader, desc=f"Teacher Epoch {epoch + 1}/{num_epochs}")
         for step_idx, batch in enumerate(pbar, start=1):
             _move_batch_to_device(batch, device)
             outputs = model(batch)
-            labels = (1.0 - batch["is_open"]).float().view(-1, 1)
+            labels = _targets_from_batch(batch)
             loss = criterion(outputs, _smooth_labels(labels))
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
@@ -118,6 +149,8 @@ def train_teacher(
             total_loss += float(loss.item())
             train_probs.append(_collect_probs(outputs))
             train_labels.append(labels.detach().cpu().numpy().flatten())
+            if id_log_dir:
+                seen_ids.update(_extract_restaurant_ids(batch))
 
             if max_train_steps and step_idx >= max_train_steps:
                 break
@@ -135,21 +168,26 @@ def train_teacher(
             model.eval()
             probs, labels = [], []
             loss_sum = 0.0
+            eval_ids: set[int] = set()
             with torch.no_grad():
                 pbar2 = tqdm(loader, desc=f"Teacher Eval {split}")
                 for step_idx, batch in enumerate(pbar2, start=1):
                     _move_batch_to_device(batch, device)
                     outputs = model(batch)
-                    y = (1.0 - batch["is_open"]).float().view(-1, 1)
+                    y = _targets_from_batch(batch)
                     loss = criterion(outputs, _smooth_labels(y))
                     loss_sum += float(loss.item())
                     probs.append(_collect_probs(outputs))
                     labels.append(y.detach().cpu().numpy().flatten())
+                    if id_log_dir:
+                        eval_ids.update(_extract_restaurant_ids(batch))
                     if max_steps and step_idx >= max_steps:
                         break
             probs_arr = np.concatenate(probs) if probs else np.array([])
             labels_arr = np.concatenate(labels) if labels else np.array([])
             metrics = _metrics_from_probs(probs_arr, labels_arr)
+            if id_log_dir:
+                _dump_ids(os.path.join(id_log_dir, f"teacher_{split.lower()}_epoch{epoch + 1}.txt"), eval_ids)
             return loss_sum / max(1, len(probs)), metrics
 
         val_loss, val_metrics = _eval(val_loader, "Val", max_val_steps)
@@ -165,6 +203,9 @@ def train_teacher(
             best_state = {"state": model.state_dict(), "meta": {"epoch": epoch + 1, "auc": float(best_val_auc)}}
             os.makedirs(checkpoint_dir, exist_ok=True)
             torch.save(best_state, os.path.join(checkpoint_dir, "teacher_best.pt"))
+
+        if id_log_dir:
+            _dump_ids(os.path.join(id_log_dir, f"teacher_train_epoch{epoch + 1}.txt"), seen_ids)
 
     if best_state is not None:
         model.load_state_dict(best_state["state"])  # type: ignore[arg-type]
@@ -187,6 +228,7 @@ def train_student_distill(
     log_dir: str = "logs_kd",
     log_filename: str = "student.log",
     checkpoint_dir: str = "checkpoints_kd",
+    id_log_dir: str | None = None,
     max_train_steps: Optional[int] = None,
     max_val_steps: Optional[int] = None,
     max_test_steps: Optional[int] = None,
@@ -215,6 +257,7 @@ def train_student_distill(
         student.train()
         train_probs, train_labels = [], []
         total_loss = 0.0
+        seen_ids: set[int] = set()
 
         pbar = tqdm(train_loader, desc=f"Student Epoch {epoch + 1}/{num_epochs}")
         for step_idx, batch in enumerate(pbar, start=1):
@@ -228,7 +271,7 @@ def train_student_distill(
             logits_student = student(batch)
 
             # 监督损失
-            labels = (1.0 - batch["is_open"]).float().view(-1, 1)
+            labels = _targets_from_batch(batch)
             loss_sup = criterion_sup(logits_student, _smooth_labels(labels))
 
             # KL 蒸馏损失（对概率，含温度）
@@ -245,6 +288,8 @@ def train_student_distill(
             total_loss += float(loss.item())
             train_probs.append(_collect_probs(logits_student))
             train_labels.append(labels.detach().cpu().numpy().flatten())
+            if id_log_dir:
+                seen_ids.update(_extract_restaurant_ids(batch))
 
             if max_train_steps and step_idx >= max_train_steps:
                 break
@@ -263,20 +308,25 @@ def train_student_distill(
             student.eval()
             probs, labels = [], []
             loss_sum = 0.0
+            eval_ids: set[int] = set()
             with torch.no_grad():
                 pbar2 = tqdm(loader, desc=f"Student Eval {split}")
                 for step_idx, batch in enumerate(pbar2, start=1):
                     _move_batch_to_device(batch, device)
                     logits_student = student(batch)
-                    y = (1.0 - batch["is_open"]).float().view(-1, 1)
+                    y = _targets_from_batch(batch)
                     loss_sum += float(criterion_sup(logits_student, _smooth_labels(y)).item())
                     probs.append(_collect_probs(logits_student))
                     labels.append(y.detach().cpu().numpy().flatten())
+                    if id_log_dir:
+                        eval_ids.update(_extract_restaurant_ids(batch))
                     if max_steps and step_idx >= max_steps:
                         break
             probs_arr = np.concatenate(probs) if probs else np.array([])
             labels_arr = np.concatenate(labels) if labels else np.array([])
             metrics = _metrics_from_probs(probs_arr, labels_arr)
+            if id_log_dir:
+                _dump_ids(os.path.join(id_log_dir, f"student_{split.lower()}_epoch{epoch + 1}.txt"), eval_ids)
             return loss_sum / max(1, len(probs)), metrics
 
         val_loss, val_metrics = _eval(val_loader, "Val", max_val_steps)
@@ -293,7 +343,9 @@ def train_student_distill(
             os.makedirs(checkpoint_dir, exist_ok=True)
             torch.save(best_state, os.path.join(checkpoint_dir, "student_best.pt"))
 
+        if id_log_dir:
+            _dump_ids(os.path.join(id_log_dir, f"student_train_epoch{epoch + 1}.txt"), seen_ids)
+
     if best_state is not None:
         student.load_state_dict(best_state["state"])  # type: ignore[arg-type]
     return student, history
-

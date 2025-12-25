@@ -3,7 +3,7 @@ from __future__ import annotations
 """
 训练学生模型输出层的标定层（不重新训练学生主体）：
 - 冻结 BiLSTMStudent，仅训练一个非常小的 LogitCalibrator；
-- 目标：整体压低误报的死亡概率，并拉大正负样本（死亡/存活）之间的概率差异。
+- 目标：校正概率刻度，并拉大正负样本（营业/关店）之间的概率差异。
 
 示例：
   python -m survival_kd.scripts.train_calibrator ^

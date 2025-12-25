@@ -1,4 +1,4 @@
-"""使用学生模型按年份预测单个餐厅的死亡概率并绘制折线图。
+"""使用学生模型按年份预测单个餐厅的“仍营业概率”并绘制折线图。
 
 用法示例：
   python -m survival_kd.scripts.predict_student_curve ^
@@ -8,7 +8,7 @@
 
 说明：
 - 依赖训练好的学生模型（BiLSTMStudent），默认从 checkpoints_kd/student_best.pt 加载；
-- 自动按该餐厅评论出现的年份范围逐年预测死亡概率（1 - is_open），并保存折线图 PNG；
+- 自动按该餐厅评论出现的年份范围逐年预测仍营业概率（is_open），并保存折线图 PNG；
 - 注意：本项目的 `is_open` 通常表示“2019 年是否仍在营业”（标签年），不是逐年生存/死亡标签；
   因此这里的“按年份”本质是改变 reference_year/last2_mask 的构造方式，更适合做相对比较与趋势观察。
   若你要对齐 2019 标签做评估，建议加：`--min-year 2019 --max-year 2019 --time-shift-years 0`。
@@ -194,7 +194,7 @@ def _build_batch_for_year(
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Predict yearly death probability for one restaurant using student model."
+        description="Predict yearly open probability for one restaurant using student model."
     )
     parser.add_argument("--restaurant-id", type=str, required=True, help="餐厅的 restaurant_id（与 parquet 中一致）")
     parser.add_argument("--checkpoint", type=str, default="checkpoints_kd/student_best.pt", help="学生模型权重路径")
@@ -412,7 +412,7 @@ def main() -> None:
                         "history_years": int(args.history_years),
                         "macro_hit": macro_hit,
                         "macro_available": bool(macro_available),
-                        "pred_death_prob": float(prob),
+                        "pred_open_prob": float(prob),
                         "last2_reviews": last2_reviews,
                     }
                 )
@@ -421,7 +421,7 @@ def main() -> None:
     name = row.get("name") or row.get("restaurant_name") or ""
     if name:
         print(f"Name: {name}")
-    print("Yearly death probabilities (student model, by review year):")
+    print("Yearly open probabilities (student model, by review year):")
     for review_year, prob, n_last2 in zip(years, probs, last2_counts):
         target_year = review_year + args.time_shift_years
         suffix = ""
@@ -496,8 +496,8 @@ def main() -> None:
     if args.time_shift_years:
         xlabel = f"Year (review year + {args.time_shift_years})"
     plt.xlabel(xlabel)
-    plt.ylabel("Death probability (1 - is_open)")
-    plt.title(f"Student model death prob - {args.restaurant_id}")
+    plt.ylabel("Open probability (is_open)")
+    plt.title(f"Student model open prob - {args.restaurant_id}")
     plt.grid(True, linestyle="--", alpha=0.5)
     plt.tight_layout()
     plt.savefig(output_path, dpi=150)

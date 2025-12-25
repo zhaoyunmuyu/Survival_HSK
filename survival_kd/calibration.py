@@ -3,7 +3,7 @@ from __future__ import annotations
 """
 Logit 标定模块：
 - 冻结学生模型，只在其输出 logits 上增加一个非常小的线性标定层；
-- 通过监督损失 + “负样本拉回”边际损失，整体压低误报的死亡概率，并拉大学生模型对正负样本的区分度。
+- 通过监督损失 + “间隔”边际损失，整体校正概率刻度，并拉大学生模型对正负样本的区分度。
 
 用法概览：
 - 训练：在脚本中加载已训练好的学生模型，调用 train_logit_calibrator；
@@ -85,8 +85,8 @@ def train_logit_calibrator(
 ) -> Tuple[LogitCalibrator, Dict[str, Any]]:
     """
     在冻结学生模型的前提下训练标定层：
-    - 监督损失：对标定后的 logits 使用 BinaryFocalLoss，对齐 1 - is_open；
-    - 负样本拉回：在每个 batch 中，使“关闭”餐厅的平均死亡概率至少比“存活”餐厅高 margin。
+    - 监督损失：对标定后的 logits 使用 BinaryFocalLoss，对齐 is_open（1=仍营业, 0=关店）；
+    - 间隔约束：在每个 batch 中，使“仍营业”的平均概率至少比“关店”高 margin。
     """
     log_path, logger = setup_logging(log_dir, log_filename)
     logger.info("[KD][Calibrator] Logging to %s", log_path)
@@ -116,7 +116,7 @@ def train_logit_calibrator(
             with torch.no_grad():
                 logits_student = student(batch)  # [B, 1]
 
-            labels = (1.0 - batch["is_open"]).float().view(-1, 1)  # 1 = 死亡, 0 = 存活
+            labels = batch["is_open"].float().view(-1, 1)  # 1 = 仍营业, 0 = 关店
             logits_cal = calibrator(logits_student)
 
             # 监督损失：对齐标签（带轻微平滑）
@@ -171,7 +171,7 @@ def train_logit_calibrator(
             for step_idx, batch in enumerate(val_loader, start=1):
                 _move_batch_to_device(batch, device)
                 logits_student = student(batch)
-                labels = (1.0 - batch["is_open"]).float().view(-1, 1)
+                labels = batch["is_open"].float().view(-1, 1)
                 logits_cal = calibrator(logits_student)
 
                 labels_smooth = labels * 0.8 + 0.1
@@ -228,4 +228,3 @@ def train_logit_calibrator(
         calibrator.load_state_dict(best_state["state"])  # type: ignore[arg-type]
 
     return calibrator, history
-

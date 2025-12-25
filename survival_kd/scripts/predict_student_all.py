@@ -1,4 +1,4 @@
-"""批量使用学生模型为所有餐厅按年份预测死亡概率，并导出 CSV。
+"""批量使用学生模型为所有餐厅按年份预测“仍营业概率”，并导出 CSV。
 
 用法示例：
   python -m survival_kd.scripts.predict_student_all ^
@@ -9,10 +9,10 @@
 说明：
 - 对 restaurant_data.parquet 中的每一家餐厅，结合其所有评论与宏观数据；
 - 对该餐厅所有评论年份（可用 --min-year/--max-year 限制）逐年构造样本，
-  使用学生模型预测“死亡概率”（训练时目标为 1 - is_open）；
+  使用学生模型预测“仍营业概率”（训练时目标为 is_open）；
 - 注意：训练标签 is_open 是“当前是否仍在营业”，不是逐年生存/死亡标签；因此这里的“按年份”
   主要是改变 reference_year/last2_mask 的构造方式，更适合做相对比较与趋势观察。
-- 结果保存为 CSV：列包括 restaurant_id, year, eval_year, pred_death_prob 等。
+- 结果保存为 CSV：列包括 restaurant_id, year, eval_year, pred_open_prob 等。
 """
 
 from __future__ import annotations
@@ -99,7 +99,7 @@ def _build_batch_for_year(
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Predict yearly death probability for all restaurants using student model.")
+    parser = argparse.ArgumentParser(description="Predict yearly open probability for all restaurants using student model.")
     parser.add_argument("--checkpoint", type=str, default="checkpoints_kd/student_best.pt", help="学生模型权重路径")
     parser.add_argument(
         "--calibrator-checkpoint",
@@ -121,7 +121,7 @@ def parse_args() -> argparse.Namespace:
         "--plot-restaurant-id",
         type=str,
         default="",
-        help="若非空，则对该餐厅按年份绘制学生模型死亡概率折线图，并保存 PNG 文件",
+        help="若非空，则对该餐厅按年份绘制学生模型仍营业概率折线图，并保存 PNG 文件",
     )
     parser.add_argument(
         "--plot-output-dir",
@@ -184,7 +184,7 @@ def _plot_restaurant_curve(
 
     sub_df = sub_df.sort_values("year")
     years = sub_df["year"].astype(float).to_numpy()
-    probs = sub_df["pred_death_prob"].astype(float).to_numpy()
+    probs = sub_df["pred_open_prob"].astype(float).to_numpy()
     name = sub_df["name"].iloc[0] if "name" in sub_df.columns else ""
 
     eval_years = years + float(time_shift_years)
@@ -205,8 +205,8 @@ def _plot_restaurant_curve(
     if time_shift_years:
         xlabel = f"Year (review year + {time_shift_years})"
     plt.xlabel(xlabel)
-    plt.ylabel("Death probability (1 - is_open)")
-    title = f"Student death prob - {restaurant_id}"
+    plt.ylabel("Open probability (is_open)")
+    title = f"Student open prob - {restaurant_id}"
     if isinstance(name, str) and name:
         title += f" ({name})"
     plt.title(title)
@@ -327,7 +327,7 @@ def main() -> None:
                         "region_code": region_key,
                         "year": year,
                         "eval_year": year + args.time_shift_years,
-                        "pred_death_prob": float(prob),
+                        "pred_open_prob": float(prob),
                         "n_last2_reviews": int(n_last2),
                     }
                 )
@@ -349,7 +349,7 @@ def main() -> None:
         for rid, sub_df in base_df.groupby("restaurant_id", sort=False):
             sub_df = sub_df.sort_values("eval_year")
             eval_years = sub_df["eval_year"].astype(float).to_numpy()
-            probs = sub_df["pred_death_prob"].astype(float).to_numpy()
+            probs = sub_df["pred_open_prob"].astype(float).to_numpy()
             if len(eval_years) == 0:
                 continue
             grid = np.arange(eval_years[0], eval_years[-1] + 1e-8, step)
@@ -364,7 +364,7 @@ def main() -> None:
                         "region_code": region_code,
                         "year": t - args.time_shift_years,
                         "eval_year": t,
-                        "pred_death_prob": float(p),
+                        "pred_open_prob": float(p),
                     }
                 )
         out_df = pd.DataFrame(fine_rows)

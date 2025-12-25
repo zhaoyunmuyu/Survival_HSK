@@ -37,10 +37,31 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--lambda-sup", type=float, default=1.0)
     parser.add_argument("--log-filename", type=str, default="kd_train.log")
     parser.add_argument("--checkpoint-dir", type=str, default="checkpoints_kd")
+    parser.add_argument(
+        "--id-log-dir",
+        type=str,
+        default="",
+        help="若非空，将每个 epoch 实际见到的 restaurant_id 写入该目录（train/val/test 分开）",
+    )
     parser.add_argument("--max-train-steps", type=int, default=None)
     parser.add_argument("--max-val-steps", type=int, default=None)
     parser.add_argument("--max-test-steps", type=int, default=None)
     return parser.parse_args()
+
+
+def _dump_split_ids(out_dir: str, split_name: str, loader) -> None:
+    try:
+        df = getattr(loader.dataset, "restaurant_data", None)
+        if df is None or "restaurant_id" not in df.columns:
+            return
+        ids = sorted({int(x) for x in df["restaurant_id"].astype(str).tolist() if str(x).isdigit()})
+        os.makedirs(out_dir, exist_ok=True)
+        path = os.path.join(out_dir, f"split_{split_name}_all.txt")
+        with open(path, "w", encoding="utf-8") as handle:
+            for rid in ids:
+                handle.write(f"{rid}\n")
+    except Exception:
+        return
 
 
 def main() -> None:
@@ -51,6 +72,12 @@ def main() -> None:
     train_loader = loaders["train_loader"]
     val_loader = loaders["val_loader"]
     test_loader = loaders["test_loader"]
+
+    id_log_dir = args.id_log_dir.strip() or None
+    if id_log_dir:
+        _dump_split_ids(id_log_dir, "train", train_loader)
+        _dump_split_ids(id_log_dir, "val", val_loader)
+        _dump_split_ids(id_log_dir, "test", test_loader)
 
     if args.stage == "teacher":
         teacher = MambaTeacher(d_model=args.hidden_dim)
@@ -64,6 +91,7 @@ def main() -> None:
             lr=args.lr,
             log_filename=args.log_filename,
             checkpoint_dir=args.checkpoint_dir,
+            id_log_dir=id_log_dir,
             max_train_steps=args.max_train_steps,
             max_val_steps=args.max_val_steps,
             max_test_steps=args.max_test_steps,
@@ -89,6 +117,7 @@ def main() -> None:
             lambda_sup=args.lambda_sup,
             log_filename=args.log_filename,
             checkpoint_dir=args.checkpoint_dir,
+            id_log_dir=id_log_dir,
             max_train_steps=args.max_train_steps,
             max_val_steps=args.max_val_steps,
             max_test_steps=args.max_test_steps,
@@ -97,4 +126,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
