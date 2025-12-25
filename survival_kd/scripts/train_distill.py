@@ -68,7 +68,11 @@ def main() -> None:
     args = parse_args()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    loaders = prepare_dataloaders_kd(batch_size=args.batch_size)
+    loaders = prepare_dataloaders_kd(
+        batch_size=args.batch_size,
+        reference_year=2019,  # 标签年口径：训练时不使用 operation_latest_year
+        use_macro_features=False,  # 按需求：训练不使用宏观特征
+    )
     train_loader = loaders["train_loader"]
     val_loader = loaders["val_loader"]
     test_loader = loaders["test_loader"]

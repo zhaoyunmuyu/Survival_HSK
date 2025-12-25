@@ -39,11 +39,16 @@ class RestaurantDatasetKD(Dataset):
         restaurant_reviews: Dict[str, Dict[str, torch.Tensor]],
         macro_data: Dict[str, Dict[int, torch.Tensor]],
         macro_default: torch.Tensor,
+        *,
+        reference_year: int | None = None,
+        use_macro_features: bool = True,
     ) -> None:
         self.restaurant_data = restaurant_data.reset_index(drop=True)
         self.restaurant_reviews = restaurant_reviews
         self.macro_data = macro_data
         self.macro_default = macro_default
+        self.reference_year = reference_year
+        self.use_macro_features = use_macro_features
         self.default_reviews = {
             "text": torch.zeros((MAX_REVIEWS_PER_RESTAURANT, TEXT_VECTOR_DIM), dtype=torch.float32),
             "images": torch.zeros((MAX_REVIEWS_PER_RESTAURANT, IMAGE_VECTOR_DIM), dtype=torch.float32),
@@ -66,10 +71,12 @@ class RestaurantDatasetKD(Dataset):
         restaurant_id = str(row["restaurant_id"])
         reviews = self.restaurant_reviews.get(restaurant_id, self.default_reviews)
 
-        # 参考年优先使用基础表中的 operation_latest_year；缺失则用该餐厅评论中最大年份
-        ref_year = None
+        # 参考年：
+        # - 若指定了固定 reference_year（例如标签年 2019），则完全不使用 operation_latest_year；
+        # - 否则保留旧逻辑：优先用 operation_latest_year，缺失再用该餐厅评论最大年份。
+        ref_year = self.reference_year
         op_year = row.get("operation_latest_year")
-        if pd.notna(op_year):
+        if ref_year is None and pd.notna(op_year):
             try:
                 ref_year = int(op_year)
             except (TypeError, ValueError):
@@ -88,9 +95,13 @@ class RestaurantDatasetKD(Dataset):
         else:
             last2_mask = torch.zeros_like(self.default_reviews["years"], dtype=torch.bool)
 
-        region_key = row.get("region_code") if isinstance(row.get("region_code"), str) else None
-        region_macro = self.macro_data.get(region_key, {}) if region_key else {}
-        macro_features = region_macro.get(ref_year, self.macro_default)
+        macro_features = self.macro_default
+        if self.use_macro_features:
+            region_key = row.get("region_code") if isinstance(row.get("region_code"), str) else None
+            region_macro = self.macro_data.get(region_key, {}) if region_key else {}
+            macro_features = region_macro.get(ref_year, self.macro_default)
+        else:
+            region_key = row.get("region_code") if isinstance(row.get("region_code"), str) else None
 
         region_encoding = REGION_MAPPING.get(region_key, 0)
         is_open_value = float(row["is_open"]) if pd.notna(row["is_open"]) else 0.0

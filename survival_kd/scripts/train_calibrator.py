@@ -105,6 +105,8 @@ def main() -> None:
         batch_size=args.batch_size,
         limit_restaurants=args.limit_restaurants,
         downsample_train_open=False,
+        reference_year=2019,
+        use_macro_features=False,
     )
     train_loader = loaders["train_loader"]
     val_loader = loaders["val_loader"]

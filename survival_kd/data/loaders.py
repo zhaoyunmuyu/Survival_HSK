@@ -53,6 +53,8 @@ def prepare_dataloaders_kd(
     limit_restaurants: int | None = None,
     *,
     downsample_train_open: bool = True,
+    reference_year: int | None = None,
+    use_macro_features: bool = True,
 ) -> Dict[str, Any]:
     """创建蒸馏版 train/val/test DataLoader（不带图结构，但包含图片特征）。
 
@@ -101,10 +103,17 @@ def prepare_dataloaders_kd(
     review_df = review_df[review_df["restaurant_id"].isin(required_ids)]
     review_df = prepare_review_dataframe(review_df)
 
-    LOGGER.info("[KD] Loading macro-economic data ...")
-    with open(_resolve_data_file("normalized_macro_data.json"), "r", encoding="utf-8") as handle:
-        macro_raw = json.load(handle)
-    macro_data, macro_default = prepare_macro_data(macro_raw)
+    if use_macro_features:
+        LOGGER.info("[KD] Loading macro-economic data ...")
+        with open(_resolve_data_file("normalized_macro_data.json"), "r", encoding="utf-8") as handle:
+            macro_raw = json.load(handle)
+        macro_data, macro_default = prepare_macro_data(macro_raw)
+    else:
+        LOGGER.info("[KD] Macro features disabled; using zero vectors")
+        import torch
+
+        macro_data = {}
+        macro_default = torch.zeros(62, dtype=torch.float32)
 
     LOGGER.info("[KD] Loading text vectors ...")
     text_feat_df = _read_parquet_df(_resolve_data_file("text_vectors.parquet"))
@@ -130,9 +139,30 @@ def prepare_dataloaders_kd(
     )
     del review_df
 
-    train_dataset = RestaurantDatasetKD(train_df, restaurant_reviews_cache, macro_data, macro_default)
-    val_dataset = RestaurantDatasetKD(val_df, restaurant_reviews_cache, macro_data, macro_default)
-    test_dataset = RestaurantDatasetKD(test_df, restaurant_reviews_cache, macro_data, macro_default)
+    train_dataset = RestaurantDatasetKD(
+        train_df,
+        restaurant_reviews_cache,
+        macro_data,
+        macro_default,
+        reference_year=reference_year,
+        use_macro_features=use_macro_features,
+    )
+    val_dataset = RestaurantDatasetKD(
+        val_df,
+        restaurant_reviews_cache,
+        macro_data,
+        macro_default,
+        reference_year=reference_year,
+        use_macro_features=use_macro_features,
+    )
+    test_dataset = RestaurantDatasetKD(
+        test_df,
+        restaurant_reviews_cache,
+        macro_data,
+        macro_default,
+        reference_year=reference_year,
+        use_macro_features=use_macro_features,
+    )
 
     num_workers = max(1, os.cpu_count() // 2)
     LOGGER.info("[KD] Creating DataLoaders (batch_size=%d, num_workers=%d)", batch_size, num_workers)
