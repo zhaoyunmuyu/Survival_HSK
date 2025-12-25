@@ -211,7 +211,6 @@ __marimo__/
 survival_hsk/data/
 preprocessed_data_cache/
 checkpoints*/
-logs*/
 training_history.npy
 
 restaurant_data.parquet
