@@ -72,6 +72,9 @@ class BiLSTMStudent(nn.Module):
         # 将非 keep 的位标记为 padding（True），以共同参与掩码
         effective_padding = padding_mask | (~keep_mask)
 
+        # 将所有被 mask 掉的位置 token 置零，避免序列模型（LSTM）跨步泄露
+        tokens = tokens.masked_fill(effective_padding.unsqueeze(-1), 0.0)
+
         lstm_out, _ = self.lstm(tokens)
         seq_feat = self._masked_mean(lstm_out, effective_padding)
 

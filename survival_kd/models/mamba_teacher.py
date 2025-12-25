@@ -96,12 +96,15 @@ class MambaTeacher(nn.Module):
     def forward(self, batch: dict) -> torch.Tensor:
         # 序列 token 与 padding 掩码
         tokens, padding_mask = self.token_builder(batch)  # [B,L,d], [B,L]
+        # 强制将 padding 位 token 置零，避免在 Mamba 路径中发生信息泄露
+        tokens = tokens.masked_fill(padding_mask.unsqueeze(-1), 0.0)
 
         if self._use_mamba:
             # Mamba 顺序处理（不支持 key_padding_mask，直接让 padding 位为 0 的 token 自然衰减）
             x = tokens
             for layer in self.encoder:
                 x = layer(x)
+                x = x.masked_fill(padding_mask.unsqueeze(-1), 0.0)
         else:
             x = self.encoder(tokens, src_key_padding_mask=padding_mask)
 
