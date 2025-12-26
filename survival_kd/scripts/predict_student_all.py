@@ -1,4 +1,4 @@
-"""批量使用学生模型为所有餐厅按年份预测“仍营业概率”，并导出 CSV。
+"""批量使用学生模型为餐厅按年份预测“仍营业概率”，并导出 CSV。
 
 用法示例：
   python -m survival_kd.scripts.predict_student_all ^
@@ -38,6 +38,29 @@ from survival_kd.models.bilstm_student import BiLSTMStudent
 from survival_kd.calibration import LogitCalibrator
 from survival_st_gcn.data.text_vectors import build_text_vector_map
 from survival_st_gcn.data.macro import prepare_macro_data
+
+
+def _load_restaurant_ids_from_files(paths: List[str]) -> List[str]:
+    out: List[str] = []
+    seen = set()
+    for path in paths:
+        if not path:
+            continue
+        if not os.path.exists(path):
+            raise FileNotFoundError(f"Restaurant id file not found: {path}")
+        with open(path, "r", encoding="utf-8") as handle:
+            for line in handle:
+                rid = line.strip()
+                if not rid:
+                    continue
+                # accept numeric ids only (same as parquet schema)
+                if not rid.isdigit():
+                    continue
+                if rid in seen:
+                    continue
+                seen.add(rid)
+                out.append(rid)
+    return out
 
 
 def _resolve_data_file_local(filename: str) -> str:
@@ -116,6 +139,12 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=None,
         help="最多预测的餐厅数量（按 restaurant_data.parquet 中顺序截断）",
+    )
+    parser.add_argument(
+        "--restaurant-ids-file",
+        action="append",
+        default=[],
+        help="可选：只对文件中的餐厅 id 做预测（每行一个数字 id）；可重复传入以合并多个文件",
     )
     parser.add_argument(
         "--plot-restaurant-id",
@@ -247,6 +276,11 @@ def main() -> None:
 
     rest_df = _read_parquet_df(_resolve_data_file_local("restaurant_data.parquet"))
     rest_df["restaurant_id"] = rest_df["restaurant_id"].astype(str)
+    if args.restaurant_ids_file:
+        allowed = set(_load_restaurant_ids_from_files(list(args.restaurant_ids_file)))
+        if not allowed:
+            raise ValueError("--restaurant-ids-file provided but no valid numeric ids were loaded.")
+        rest_df = rest_df[rest_df["restaurant_id"].isin(allowed)].copy()
 
     review_df = _read_parquet_df(_resolve_data_file_local("review_data.parquet"))
     review_df["restaurant_id"] = review_df["restaurant_id"].astype(str)
