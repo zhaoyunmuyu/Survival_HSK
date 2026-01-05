@@ -144,6 +144,8 @@ ENV/
 env.bak/
 venv.bak/
 openrice/
+# 下载出来的 openrice 图片（默认输出目录）
+openrice_images/
 
 # Spyder project settings
 .spyderproject
@@ -215,3 +217,4 @@ training_history.npy
 
 restaurant_data.parquet
 review_data.parquet
+plots/

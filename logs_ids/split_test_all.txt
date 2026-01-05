@@ -1,3 +1,4 @@
+python -m survival_kd.scripts.predict_student_all --checkpoint checkpoints_kd/student_best.pt --hidden-dim 512 --restaurant-ids-file logs_ids/split_train_all.txt --restaurant-ids-file logs_ids/split_test_all.txt --plot-all --output preds_train_test.csv --plot-output-dir plots_train_test
 30
 61
 90
