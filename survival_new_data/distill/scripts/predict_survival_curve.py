@@ -30,6 +30,7 @@ try:
 except Exception:  # pragma: no cover
     plt = None  # type: ignore[assignment]
 
+import pyarrow as pa
 import pyarrow.dataset as ds
 
 from survival_new_data.distill.data.io import resolve_data_path
@@ -97,6 +98,11 @@ def _read_parquet_table(path: Path, *, columns: Optional[List[str]] = None, filt
     return table.to_pandas()
 
 
+def _field_str(name: str):
+    """pyarrow.dataset 的过滤表达式要求左右类型一致；统一把字段 cast 成 string 便于与命令行参数对齐。"""
+    return ds.field(name).cast(pa.string())
+
+
 def _load_restaurant_row(restaurant_id: str, *, data_dir: Optional[Path]) -> Dict[str, object]:
     path = resolve_data_path("restaurant_base.parquet", data_dir=data_dir)
     if not path.exists():
@@ -125,7 +131,7 @@ def _load_reviews_for_restaurant(restaurant_id: str, *, data_dir: Optional[Path]
         "review_hygiene",
         "review_dishi",
     ]
-    filt = ds.field("restaurant_id") == str(restaurant_id)
+    filt = _field_str("restaurant_id") == str(restaurant_id)
     df = _read_parquet_table(path, columns=cols, filter_expr=filt)
     if df.empty:
         raise RuntimeError(f"No reviews found for restaurant_id={restaurant_id!r} in reviews_clean.parquet")
@@ -140,7 +146,7 @@ def _load_bert_vectors_for_review_ids(review_ids: List[str], *, data_dir: Option
         raise FileNotFoundError(f"review_bert_emb.parquet not found at: {path}")
 
     cols = ["review_id"] + [f"bert_emb_{i}" for i in range(int(text_dim))]
-    filt = ds.field("review_id").isin([str(x) for x in review_ids])
+    filt = _field_str("review_id").isin([str(x) for x in review_ids])
     df = _read_parquet_table(path, columns=cols, filter_expr=filt)
     df["review_id"] = df["review_id"].astype(str)
     return df
@@ -152,7 +158,7 @@ def _load_img_vectors_for_review_ids(review_ids: List[str], *, data_dir: Optiona
         return None
 
     cols = ["review_id"] + [f"img_emb_{i}" for i in range(int(img_dim))]
-    filt = ds.field("review_id").isin([str(x) for x in review_ids])
+    filt = _field_str("review_id").isin([str(x) for x in review_ids])
     df = _read_parquet_table(path, columns=cols, filter_expr=filt)
     if df.empty:
         return df
@@ -379,4 +385,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
