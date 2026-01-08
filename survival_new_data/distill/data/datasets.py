@@ -8,7 +8,6 @@
 - review_features: [L, feature_dim]
 - review_years: [L]
 - last2_mask: [L]
-- macro_features: [62]（当前默认全零，占位）
 - region_encoding: [1]（优先使用 restaurant_region_num；缺失则为 0）
 - reference_year: [1]
 """
@@ -45,7 +44,6 @@ class RestaurantDatasetDistill(Dataset):
             "features": torch.zeros((128, int(feature_dim)), dtype=torch.float32),
             "years": torch.zeros((128,), dtype=torch.long),
         }
-        self.macro_default = torch.zeros((62,), dtype=torch.float32)
 
     @staticmethod
     def _safe_long(value: Any) -> torch.Tensor:
@@ -126,7 +124,6 @@ class RestaurantDatasetDistill(Dataset):
             "review_features": reviews["features"],
             "review_years": years_tensor.long(),
             "last2_mask": last2_mask.to(torch.bool),
-            "macro_features": self.macro_default,
             "region_encoding": torch.tensor([float(region_encoding)], dtype=torch.float32),
             "reference_year": torch.tensor([int(ref_time)], dtype=torch.long),
         }

@@ -60,7 +60,9 @@ class BiLSTMStudent(nn.Module):
 
     def _region_feature(self, region_encoding: torch.Tensor) -> torch.Tensor:
         region_idx = region_encoding.squeeze().long() - 1
-        region_onehot = F.one_hot(region_idx.clamp(min=0), num_classes=18).float()
+        # 防御性处理：one_hot 在 CUDA 上遇到越界会触发 device-side assert
+        region_idx = region_idx.clamp(min=0, max=17)
+        region_onehot = F.one_hot(region_idx, num_classes=18).float()
         return self.region_proj(region_onehot)
 
     def forward(self, batch: dict) -> torch.Tensor:
@@ -71,6 +73,10 @@ class BiLSTMStudent(nn.Module):
         keep_mask = last2_mask  # [B,L]
         # 将非 keep 的位标记为 padding（True），以共同参与掩码
         effective_padding = padding_mask | (~keep_mask)
+
+        # LSTM 不支持 key_padding_mask：必须将被 mask 的位置置零，
+        # 避免被“丢弃”的 token 通过隐藏状态影响后续 token（尤其是 last2 之前的序列）。
+        tokens = tokens.masked_fill(effective_padding.unsqueeze(-1), 0.0)
 
         lstm_out, _ = self.lstm(tokens)
         seq_feat = self._masked_mean(lstm_out, effective_padding)

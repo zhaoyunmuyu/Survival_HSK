@@ -81,7 +81,9 @@ class MambaTeacher(nn.Module):
 
     def _region_feature(self, region_encoding: torch.Tensor) -> torch.Tensor:
         region_idx = region_encoding.squeeze().long() - 1
-        region_onehot = F.one_hot(region_idx.clamp(min=0), num_classes=18).float()
+        # 防御性处理：one_hot 在 CUDA 上遇到越界会触发 device-side assert
+        region_idx = region_idx.clamp(min=0, max=17)
+        region_onehot = F.one_hot(region_idx, num_classes=18).float()
         return self.region_proj(region_onehot)
 
     @staticmethod
@@ -97,11 +99,16 @@ class MambaTeacher(nn.Module):
         # 序列 token 与 padding 掩码
         tokens, padding_mask = self.token_builder(batch)  # [B,L,d], [B,L]
 
+        # padding 位置的 token（尤其包含 time embedding）会干扰 Mamba 的顺序建模，
+        # 需显式置零，并在每层后重新 mask。
+        tokens = tokens.masked_fill(padding_mask.unsqueeze(-1), 0.0)
+
         if self._use_mamba:
             # Mamba 顺序处理（不支持 key_padding_mask，直接让 padding 位为 0 的 token 自然衰减）
             x = tokens
             for layer in self.encoder:
                 x = layer(x)
+                x = x.masked_fill(padding_mask.unsqueeze(-1), 0.0)
         else:
             x = self.encoder(tokens, src_key_padding_mask=padding_mask)
 

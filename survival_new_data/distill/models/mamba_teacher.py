@@ -46,9 +46,11 @@ class MambaTeacher(nn.Module):
         feature_dim: int = 8,
         time_step: TokenBuilder._TimeStep = "year",
         max_offset_years: int = 10,
+        use_macro_features: bool = False,
     ) -> None:
         super().__init__()
         self.d_model = int(d_model)
+        self.use_macro_features = bool(use_macro_features)
         self.token_builder = TokenBuilder(
             d_model=self.d_model,
             text_dim=int(text_dim),
@@ -59,9 +61,13 @@ class MambaTeacher(nn.Module):
         )
 
         self.region_proj = nn.Linear(18, self.d_model)
-        self.macro_proj = nn.Sequential(
-            nn.Linear(62, self.d_model),
-            nn.ReLU(),
+        self.macro_proj = (
+            nn.Sequential(
+                nn.Linear(62, self.d_model),
+                nn.ReLU(),
+            )
+            if self.use_macro_features
+            else None
         )
 
         try:
@@ -91,7 +97,9 @@ class MambaTeacher(nn.Module):
 
     def _region_feature(self, region_encoding: torch.Tensor) -> torch.Tensor:
         region_idx = region_encoding.squeeze().long() - 1
-        region_onehot = F.one_hot(region_idx.clamp(min=0), num_classes=18).float()
+        # 防御性处理：one_hot 在 CUDA 上遇到越界会触发 device-side assert
+        region_idx = region_idx.clamp(min=0, max=17)
+        region_onehot = F.one_hot(region_idx, num_classes=18).float()
         return self.region_proj(region_onehot)
 
     @staticmethod
@@ -104,16 +112,31 @@ class MambaTeacher(nn.Module):
     def forward(self, batch: dict) -> torch.Tensor:
         tokens, padding_mask = self.token_builder(batch)
 
+        # padding 位置的 token（尤其包含 time embedding）会干扰 Mamba 的顺序建模，
+        # 需显式置零，并在每层后重新 mask。
+        tokens = tokens.masked_fill(padding_mask.unsqueeze(-1), 0.0)
+
         if self._use_mamba:
             x = tokens
             for layer in self.encoder:
                 x = layer(x)
+                x = x.masked_fill(padding_mask.unsqueeze(-1), 0.0)
         else:
             x = self.encoder(tokens, src_key_padding_mask=padding_mask)
 
         seq_feat = self._masked_mean(x, padding_mask)
         region_feat = self._region_feature(batch["region_encoding"])
-        macro_feat = self.macro_proj(batch["macro_features"])
+        if self.use_macro_features and self.macro_proj is not None:
+            macro = batch.get("macro_features")
+            if macro is not None:
+                macro = macro.float()
+                if macro.dim() == 1:
+                    macro = macro.unsqueeze(0)
+                macro_feat = self.macro_proj(macro)
+            else:
+                macro_feat = torch.zeros((seq_feat.size(0), self.d_model), dtype=seq_feat.dtype, device=seq_feat.device)
+        else:
+            macro_feat = torch.zeros((seq_feat.size(0), self.d_model), dtype=seq_feat.dtype, device=seq_feat.device)
         fused = self.norm(self.dropout(seq_feat + region_feat + macro_feat))
 
         logits = self.classifier(fused)

@@ -3,10 +3,12 @@
 约定输入：
 - reviews_clean.parquet: 每条评论粒度的清洗表（来源：survival_new_data/preprocess/build_reviews_clean.py）
 - review_bert_emb.parquet: 每条评论对应的 BERT 向量（来源：survival_new_data/preprocess/build_review_bert_emb.py）
+（可选）
+- review_img_emb.parquet: 每条评论对应的图片向量（来源：survival_new_data/preprocess/build_review_img_emb.py）
 
 输出（缓存）字段：
 - text: [L, text_dim]
-- images: [L, img_dim]（若无图片特征，默认为全零）
+- images: [L, img_dim]（若无图片特征文件或缺失，默认为全零）
 - features: [L, feature_dim]
 - years: [L]  每条评论的年份，缺失为 0
 """
@@ -62,6 +64,22 @@ def load_review_bert_emb_df(*, data_dir: Optional[Path] = None, text_dim: int = 
 
     cols = ["review_id"]
     cols.extend([f"bert_emb_{i}" for i in range(int(text_dim))])
+    return pd.read_parquet(path, columns=cols)
+
+
+def load_review_img_emb_df(*, data_dir: Optional[Path] = None, img_dim: int = 512) -> pd.DataFrame:
+    """加载 review_img_emb.parquet（可选）。
+
+    说明：
+    - 当前实现会将 img_emb_0..img_emb_{img_dim-1} 作为列读取；
+    - 若文件不存在，由调用方决定是否回退为全零。
+    """
+    path = resolve_data_path("review_img_emb.parquet", data_dir=data_dir)
+    if not path.exists():
+        raise FileNotFoundError(f"review_img_emb.parquet not found at: {path}")
+
+    cols = ["review_id"]
+    cols.extend([f"img_emb_{i}" for i in range(int(img_dim))])
     return pd.read_parquet(path, columns=cols)
 
 
@@ -129,9 +147,25 @@ def build_bert_vector_map(bert_df: pd.DataFrame, *, text_dim: int = 768) -> Dict
     return {str(rid): vectors[i] for i, rid in enumerate(ids)}
 
 
+def build_img_vector_map(img_df: pd.DataFrame, *, img_dim: int = 512) -> Dict[str, np.ndarray]:
+    """将 review_img_emb DataFrame 转成 {review_id: vector} 映射。"""
+    img_dim = int(img_dim)
+    expected = ["review_id"] + [f"img_emb_{i}" for i in range(img_dim)]
+    missing = [c for c in expected if c not in img_df.columns]
+    if missing:
+        raise KeyError(f"review_img_emb missing columns: {missing[:5]}{' ...' if len(missing) > 5 else ''}")
+
+    df = img_df.copy()
+    df["review_id"] = df["review_id"].astype(str)
+    vectors = df[[f"img_emb_{i}" for i in range(img_dim)]].to_numpy(dtype=np.float32, copy=False)
+    ids = df["review_id"].to_numpy(dtype=object)
+    return {str(rid): vectors[i] for i, rid in enumerate(ids)}
+
+
 def build_restaurant_review_cache(
     reviews_clean_df: pd.DataFrame,
     bert_vector_map: Dict[str, np.ndarray],
+    img_vector_map: Optional[Dict[str, np.ndarray]] = None,
     *,
     max_reviews: int = 128,
     text_dim: int = 768,
@@ -140,16 +174,19 @@ def build_restaurant_review_cache(
 ) -> Dict[str, Dict[str, torch.Tensor]]:
     """以餐厅为单位构建评论序列缓存（含年份）。
 
-    当前版本不接入图片特征：images 全零向量，占位以对齐模型输入。
+    - 若提供 img_vector_map（由 review_img_emb.parquet 生成），则按 review_id 填充 images；
+    - 否则 images 全零向量，占位以对齐模型输入。
     """
     text_dim = int(text_dim)
     img_dim = int(img_dim)
     feature_dim = int(feature_dim)
 
     text_zero = np.zeros(text_dim, dtype=np.float32)
+    img_zero = np.zeros(img_dim, dtype=np.float32)
 
     restaurant_reviews: Dict[str, Dict[str, torch.Tensor]] = {}
     missing_text = 0
+    missing_img = 0
 
     grouped = reviews_clean_df.groupby("restaurant_id", sort=False)
     total_groups = reviews_clean_df["restaurant_id"].nunique()
@@ -176,6 +213,13 @@ def build_restaurant_review_cache(
                 missing_text += 1
                 vec = text_zero
             text_vectors[idx] = vec
+
+            if img_vector_map is not None:
+                img_vec = img_vector_map.get(review_id)
+                if img_vec is None:
+                    missing_img += 1
+                    img_vec = img_zero
+                image_vectors[idx] = img_vec
 
             review_date = getattr(row, "review_date")
             if min_date is None or pd.isna(review_date):
@@ -207,8 +251,9 @@ def build_restaurant_review_cache(
         }
 
     LOGGER.info(
-        "[HSK][Distill] Built review cache for %d restaurants (missing bert vec: %d)",
+        "[HSK][Distill] Built review cache for %d restaurants (missing bert vec: %d, missing img vec: %d)",
         len(restaurant_reviews),
         missing_text,
+        missing_img,
     )
     return restaurant_reviews

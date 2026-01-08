@@ -33,7 +33,12 @@ except Exception:  # pragma: no cover
 import pyarrow.dataset as ds
 
 from survival_new_data.distill.data.io import resolve_data_path
-from survival_new_data.distill.data.reviews import build_bert_vector_map, build_restaurant_review_cache, prepare_reviews_clean
+from survival_new_data.distill.data.reviews import (
+    build_bert_vector_map,
+    build_img_vector_map,
+    build_restaurant_review_cache,
+    prepare_reviews_clean,
+)
 from survival_new_data.distill.models import BiLSTMStudent, MambaTeacher
 
 
@@ -141,6 +146,20 @@ def _load_bert_vectors_for_review_ids(review_ids: List[str], *, data_dir: Option
     return df
 
 
+def _load_img_vectors_for_review_ids(review_ids: List[str], *, data_dir: Optional[Path], img_dim: int) -> Optional[pd.DataFrame]:
+    path = resolve_data_path("review_img_emb.parquet", data_dir=data_dir)
+    if not path.exists():
+        return None
+
+    cols = ["review_id"] + [f"img_emb_{i}" for i in range(int(img_dim))]
+    filt = ds.field("review_id").isin([str(x) for x in review_ids])
+    df = _read_parquet_table(path, columns=cols, filter_expr=filt)
+    if df.empty:
+        return df
+    df["review_id"] = df["review_id"].astype(str)
+    return df
+
+
 def _region_encoding_from_row(row: Dict[str, object]) -> float:
     v = row.get("restaurant_region_num")
     try:
@@ -169,8 +188,6 @@ def _build_batch_for_period(
     last_window_periods = int(last_window_years) * periods
     keep_from = int(period_idx) - (last_window_periods - 1)
     last_mask = (review_time >= keep_from) & (review_time > 0)
-
-    macro = torch.zeros((1, 62), dtype=torch.float32)
     batch: Dict[str, torch.Tensor] = {
         "review_text": text.unsqueeze(0),
         "review_images": images.unsqueeze(0),
@@ -178,7 +195,6 @@ def _build_batch_for_period(
         "review_time": review_time.unsqueeze(0),
         "last2_mask": last_mask.unsqueeze(0),
         "reference_time": torch.tensor([int(period_idx)], dtype=torch.long),
-        "macro_features": macro,
         "region_encoding": torch.tensor([float(region_encoding)], dtype=torch.float32),
     }
     return batch
@@ -231,9 +247,15 @@ def main() -> None:
     bert_df = _load_bert_vectors_for_review_ids(review_ids, data_dir=data_dir, text_dim=args.text_dim)
     bert_map = build_bert_vector_map(bert_df, text_dim=args.text_dim)
 
+    img_map = None
+    img_df = _load_img_vectors_for_review_ids(review_ids, data_dir=data_dir, img_dim=args.img_dim)
+    if img_df is not None and not img_df.empty:
+        img_map = build_img_vector_map(img_df, img_dim=args.img_dim)
+
     cache = build_restaurant_review_cache(
         review_df,
         bert_map,
+        img_map,
         max_reviews=max_reviews,
         text_dim=args.text_dim,
         img_dim=args.img_dim,

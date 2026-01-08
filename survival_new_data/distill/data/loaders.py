@@ -25,8 +25,10 @@ from survival_st_gcn.utils.seed import build_generator, seed_everything, seed_wo
 from survival_new_data.distill.data.datasets import RestaurantDatasetDistill
 from survival_new_data.distill.data.reviews import (
     build_bert_vector_map,
+    build_img_vector_map,
     build_restaurant_review_cache,
     load_review_bert_emb_df,
+    load_review_img_emb_df,
     load_reviews_clean_df,
     prepare_reviews_clean,
 )
@@ -86,10 +88,20 @@ def prepare_dataloaders_distill(
     bert_df = load_review_bert_emb_df(data_dir=data_dir, text_dim=text_dim)
     bert_map = build_bert_vector_map(bert_df, text_dim=text_dim)
 
-    LOGGER.info("[HSK][Distill] Building restaurant review cache (bert only) ...")
+    img_map = None
+    try:
+        LOGGER.info("[HSK][Distill] Loading review_img_emb (optional) ...")
+        img_df = load_review_img_emb_df(data_dir=data_dir, img_dim=img_dim)
+        img_map = build_img_vector_map(img_df, img_dim=img_dim)
+        LOGGER.info("[HSK][Distill] Loaded image embeddings: %d", len(img_map))
+    except FileNotFoundError:
+        LOGGER.info("[HSK][Distill] review_img_emb.parquet not found; using zero image vectors")
+
+    LOGGER.info("[HSK][Distill] Building restaurant review cache ...")
     review_cache = build_restaurant_review_cache(
         review_df,
         bert_map,
+        img_map,
         max_reviews=128,
         text_dim=text_dim,
         img_dim=img_dim,

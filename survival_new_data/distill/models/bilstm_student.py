@@ -27,9 +27,11 @@ class BiLSTMStudent(nn.Module):
         feature_dim: int = 8,
         time_step: TokenBuilder._TimeStep = "year",
         max_offset_years: int = 10,
+        use_macro_features: bool = False,
     ) -> None:
         super().__init__()
         self.d_model = int(d_model)
+        self.use_macro_features = bool(use_macro_features)
         self.token_builder = TokenBuilder(
             d_model=self.d_model,
             text_dim=int(text_dim),
@@ -50,9 +52,13 @@ class BiLSTMStudent(nn.Module):
         )
 
         self.region_proj = nn.Linear(18, self.d_model)
-        self.macro_proj = nn.Sequential(
-            nn.Linear(62, self.d_model),
-            nn.ReLU(),
+        self.macro_proj = (
+            nn.Sequential(
+                nn.Linear(62, self.d_model),
+                nn.ReLU(),
+            )
+            if self.use_macro_features
+            else None
         )
 
         self.norm = nn.LayerNorm(self.d_model)
@@ -76,7 +82,9 @@ class BiLSTMStudent(nn.Module):
 
     def _region_feature(self, region_encoding: torch.Tensor) -> torch.Tensor:
         region_idx = region_encoding.squeeze().long() - 1
-        region_onehot = F.one_hot(region_idx.clamp(min=0), num_classes=18).float()
+        # 防御性处理：one_hot 在 CUDA 上遇到越界会触发 device-side assert
+        region_idx = region_idx.clamp(min=0, max=17)
+        region_onehot = F.one_hot(region_idx, num_classes=18).float()
         return self.region_proj(region_onehot)
 
     def forward(self, batch: dict) -> torch.Tensor:
@@ -85,11 +93,25 @@ class BiLSTMStudent(nn.Module):
         last2_mask = batch["last2_mask"].to(torch.bool)  # True 表示“属于最后两年”
         effective_padding = padding_mask | (~last2_mask)
 
+        # LSTM 不支持 key_padding_mask：必须将被 mask 的位置置零，
+        # 避免被“丢弃”的 token 通过隐藏状态影响后续 token（尤其是 last-window 之前的序列）。
+        tokens = tokens.masked_fill(effective_padding.unsqueeze(-1), 0.0)
+
         lstm_out, _ = self.lstm(tokens)
         seq_feat = self._masked_mean(lstm_out, effective_padding)
 
         region_feat = self._region_feature(batch["region_encoding"])
-        macro_feat = self.macro_proj(batch["macro_features"])
+        if self.use_macro_features and self.macro_proj is not None:
+            macro = batch.get("macro_features")
+            if macro is not None:
+                macro = macro.float()
+                if macro.dim() == 1:
+                    macro = macro.unsqueeze(0)
+                macro_feat = self.macro_proj(macro)
+            else:
+                macro_feat = torch.zeros((seq_feat.size(0), self.d_model), dtype=seq_feat.dtype, device=seq_feat.device)
+        else:
+            macro_feat = torch.zeros((seq_feat.size(0), self.d_model), dtype=seq_feat.dtype, device=seq_feat.device)
         fused = self.norm(seq_feat + region_feat + macro_feat)
         logits = self.classifier(fused)
         return logits
