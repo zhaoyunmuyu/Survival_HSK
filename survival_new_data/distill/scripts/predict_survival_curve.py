@@ -288,6 +288,11 @@ def parse_args() -> argparse.Namespace:
         default=1,
         help="仅对绘图曲线做滑动均值平滑（不影响 CSV），窗口大小（默认 1=不平滑）",
     )
+    p.add_argument("--fig-width", type=float, default=0.0, help="图宽（英寸），0=自动")
+    p.add_argument("--fig-height", type=float, default=4.0, help="图高（英寸），默认 4.0")
+    p.add_argument("--fig-width-per-point", type=float, default=0.22, help="自动图宽时每个点贡献的宽度（越小越紧凑）")
+    p.add_argument("--fig-min-width", type=float, default=8.0, help="自动图宽最小值")
+    p.add_argument("--fig-max-width", type=float, default=14.0, help="自动图宽最大值")
     p.add_argument("--device", type=str, choices=["auto", "cpu", "cuda"], default="auto")
     return p.parse_args()
 
@@ -430,7 +435,11 @@ def main() -> None:
             tick_pos = np.arange(0, n, step, dtype=int)
             tick_labels = df_out["period"].iloc[tick_pos].tolist()
 
-        fig = plt.figure(figsize=(max(10, min(18, n * 0.35)), 4))
+        if float(args.fig_width) > 0:
+            fig_w = float(args.fig_width)
+        else:
+            fig_w = float(np.clip(n * float(args.fig_width_per_point), float(args.fig_min_width), float(args.fig_max_width)))
+        fig = plt.figure(figsize=(fig_w, float(args.fig_height)))
         ax = fig.add_subplot(1, 1, 1)
         y = df_out[y_key].to_numpy(dtype=float, copy=False)
         smooth_w = max(1, int(args.plot_smooth_window))
