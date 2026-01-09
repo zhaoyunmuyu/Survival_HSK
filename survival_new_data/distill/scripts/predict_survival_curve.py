@@ -261,6 +261,33 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--last-window-years", type=int, default=2)
     p.add_argument("--output", type=str, default="", help="输出 CSV 路径（默认 survival_curve_<id>.csv）")
     p.add_argument("--plot", action="store_true", help="若安装 matplotlib，则输出折线图 PNG（画 prob_survival）")
+    p.add_argument(
+        "--plot-y",
+        type=str,
+        choices=["survival", "closed"],
+        default="survival",
+        help="画哪条曲线：survival=1-prob_closed，closed=prob_closed（默认 survival）",
+    )
+    p.add_argument(
+        "--max-xticks",
+        type=int,
+        default=24,
+        help="折线图最多显示多少个 x 轴刻度（用于避免 quarter 太密），默认 24",
+    )
+    p.add_argument(
+        "--xtick-year-only",
+        action="store_true",
+        help="只在整年边界显示 x 轴刻度（quarter 显示 Q1，half 显示 H1），并用年份作为标签",
+    )
+    p.add_argument("--line-width", type=float, default=1.5, help="折线宽度（默认 1.5）")
+    p.add_argument("--marker-size", type=float, default=2.0, help="点的大小（markersize，默认 2.0）")
+    p.add_argument("--marker-every", type=int, default=1, help="每隔多少个点画一个 marker（默认每个点都画）")
+    p.add_argument(
+        "--plot-smooth-window",
+        type=int,
+        default=1,
+        help="仅对绘图曲线做滑动均值平滑（不影响 CSV），窗口大小（默认 1=不平滑）",
+    )
     p.add_argument("--device", type=str, choices=["auto", "cpu", "cuda"], default="auto")
     return p.parse_args()
 
@@ -368,15 +395,64 @@ def main() -> None:
     if args.plot:
         if plt is None:
             raise RuntimeError("matplotlib is not available, cannot plot")
-        fig = plt.figure(figsize=(10, 4))
+        y_key = "prob_survival" if args.plot_y == "survival" else "prob_closed"
+        y_label = y_key
+
+        # x 轴太密（尤其是 quarter）时，改用索引轴，并稀疏显示刻度标签
+        n = len(df_out)
+        x = np.arange(n)
+        max_xticks = max(2, int(args.max_xticks))
+        if args.xtick_year_only:
+            periods = df_out["period"].astype(str).tolist()
+            year_pos: List[int] = []
+            year_labels: List[str] = []
+            for i, label in enumerate(periods):
+                if time_step == "year":
+                    ok = True
+                elif time_step == "half":
+                    ok = label.endswith("-H1")
+                else:  # quarter
+                    ok = label.endswith("Q1")
+                if ok:
+                    year_pos.append(i)
+                    year_labels.append(label[:4])
+
+            if not year_pos:
+                step = max(1, int(np.ceil(n / max_xticks)))
+                tick_pos = np.arange(0, n, step, dtype=int)
+                tick_labels = df_out["period"].iloc[tick_pos].tolist()
+            else:
+                step = max(1, int(np.ceil(len(year_pos) / max_xticks)))
+                tick_pos = np.asarray(year_pos[::step], dtype=int)
+                tick_labels = [year_labels[i] for i in range(0, len(year_labels), step)]
+        else:
+            step = max(1, int(np.ceil(n / max_xticks)))
+            tick_pos = np.arange(0, n, step, dtype=int)
+            tick_labels = df_out["period"].iloc[tick_pos].tolist()
+
+        fig = plt.figure(figsize=(max(10, min(18, n * 0.35)), 4))
         ax = fig.add_subplot(1, 1, 1)
-        ax.plot(df_out["period"], df_out["prob_survival"], marker="o", linewidth=1.5)
+        y = df_out[y_key].to_numpy(dtype=float, copy=False)
+        smooth_w = max(1, int(args.plot_smooth_window))
+        if smooth_w > 1:
+            y = pd.Series(y).rolling(window=smooth_w, center=True, min_periods=1).mean().to_numpy()
+
+        marker_every = max(1, int(args.marker_every))
+        ax.plot(
+            x,
+            y,
+            marker="o",
+            markersize=float(args.marker_size),
+            markevery=marker_every,
+            linewidth=float(args.line_width),
+        )
         ax.set_title(f"Survival probability curve ({args.model}) - restaurant_id={args.restaurant_id}")
         ax.set_xlabel("period")
-        ax.set_ylabel("prob_survival")
+        ax.set_ylabel(y_label)
         ax.set_ylim(0.0, 1.0)
         ax.grid(True, linestyle="--", alpha=0.4)
-        ax.tick_params(axis="x", rotation=45)
+        ax.set_xticks(tick_pos)
+        ax.set_xticklabels(tick_labels, rotation=45, ha="right")
         fig.tight_layout()
         png_path = Path(output).with_suffix(".png")
         fig.savefig(png_path, dpi=150)
