@@ -19,7 +19,7 @@
     --marker-size 1.0 --marker-every 4 --plot-smooth-window 5 ^
     --fig-width 7 --fig-height 3.5
 """
-
+python -m survival_new_data.distill.scripts.predict_survival_curve_all --model student --checkpoint checkpoints_hsk_distill/student_best.pt --data-dir /nvme01/gvm0/hsk/data --time-step quarter --out-dir plots_survival_curves --plot --xtick-year-only --max-xticks 10 --marker-size 1.0 --marker-every 4 --plot-smooth-window 5 --fig-width 7 --fig-height 3.5
 from __future__ import annotations
 
 import argparse

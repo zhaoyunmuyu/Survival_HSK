@@ -218,3 +218,7 @@ training_history.npy
 restaurant_data.parquet
 review_data.parquet
 plots/
+artifacts/rest_13673_openrice_month_counts.csv
+artifacts/rest_13673_openrice_year_counts.csv
+artifacts/rest_13673_parquet_month_counts.csv
+artifacts/rest_13673_parquet_year_counts.csv
