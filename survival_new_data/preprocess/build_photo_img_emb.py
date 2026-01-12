@@ -197,9 +197,10 @@ def _append_row(
     review_id: str,
     emb: np.ndarray,
 ) -> pq.ParquetWriter:
-    data: Dict[str, object] = {"photo_id": str(photo_id), "review_id": str(review_id)}
+    # pyarrow>=17: Table.from_pydict expects array-like values (scalars will error).
+    data: Dict[str, object] = {"photo_id": [str(photo_id)], "review_id": [str(review_id)]}
     for i in range(int(emb.shape[0])):
-        data[f"img_emb_{i}"] = float(emb[i])
+        data[f"img_emb_{i}"] = [float(emb[i])]
     table = pa.Table.from_pydict(data)
     if writer is None:
         writer = pq.ParquetWriter(out_path, table.schema)
@@ -266,9 +267,11 @@ def main() -> None:
                 skipped += 1
                 continue
 
+            LOGGER.info("encoding photo_id=%s review_id=%s path=%s", item.photo_id, item.review_id, item.path)
             emb = _encode_one_image(model, preprocess, item.path, device=device)
             if emb is None:
                 errors += 1
+                LOGGER.warning("failed photo_id=%s review_id=%s path=%s", item.photo_id, item.review_id, item.path)
                 continue
 
             writer = _append_row(
@@ -280,6 +283,7 @@ def main() -> None:
             )
             existing.add(item.photo_id)
             kept += 1
+            LOGGER.info("wrote photo_id=%s review_id=%s", item.photo_id, item.review_id)
             if kept % 5000 == 0:
                 LOGGER.info("kept=%d skipped=%d missing=%d errors=%d", kept, skipped, missing, errors)
 
@@ -292,4 +296,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

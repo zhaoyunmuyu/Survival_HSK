@@ -273,9 +273,10 @@ def main() -> None:
                         continue
                     emb = np.zeros((img_dim,), dtype=np.float32)
 
-                data: Dict[str, object] = {"review_id": item.review_id}
+                # pyarrow>=17: Table.from_pydict expects array-like values (scalars will error).
+                data: Dict[str, object] = {"review_id": [item.review_id]}
                 for i in range(img_dim):
-                    data[f"img_emb_{i}"] = float(emb[i])
+                    data[f"img_emb_{i}"] = [float(emb[i])]
 
                 table = pa.Table.from_pydict(data)
                 if writer is None:

@@ -203,9 +203,10 @@ def _append_embedding_row(
     review_id: str,
     emb: np.ndarray,
 ) -> pq.ParquetWriter:
-    data: Dict[str, object] = {"review_id": str(review_id)}
+    # pyarrow>=17: Table.from_pydict expects array-like values (scalars will error).
+    data: Dict[str, object] = {"review_id": [str(review_id)]}
     for i in range(int(emb.shape[0])):
-        data[f"img_emb_{i}"] = float(emb[i])
+        data[f"img_emb_{i}"] = [float(emb[i])]
     table = pa.Table.from_pydict(data)
     if writer is None:
         writer = pq.ParquetWriter(out_path, table.schema)

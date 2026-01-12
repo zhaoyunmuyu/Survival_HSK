@@ -222,3 +222,4 @@ artifacts/rest_13673_openrice_month_counts.csv
 artifacts/rest_13673_openrice_year_counts.csv
 artifacts/rest_13673_parquet_month_counts.csv
 artifacts/rest_13673_parquet_year_counts.csv
+artifacts/_tmp_review_img_emb.parquet

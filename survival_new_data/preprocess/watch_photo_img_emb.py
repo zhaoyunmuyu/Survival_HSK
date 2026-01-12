@@ -286,6 +286,8 @@ def main() -> None:
                 nonlocal writer, wrote_this_round, total_written, last_progress, errors
                 if not batch_paths:
                     return
+                for pid, rid, p in zip(batch_photo_ids, batch_review_ids, batch_paths):
+                    LOGGER.info("encoding photo_id=%s review_id=%s path=%s", pid, rid, p)
                 kept_paths, embs = _encode_images(
                     model,
                     preprocess,
@@ -309,6 +311,7 @@ def main() -> None:
                     for pid, rid, p in zip(batch_photo_ids, batch_review_ids, batch_paths):
                         if pid in processed:
                             continue
+                        LOGGER.info("encoding(single) photo_id=%s review_id=%s path=%s", pid, rid, p)
                         one = _encode_one_image(model, preprocess, p, device=device)
                         if one is None:
                             continue
@@ -320,6 +323,7 @@ def main() -> None:
                             embs=one.reshape(1, -1),
                         )
                         processed.add(pid)
+                        LOGGER.info("wrote photo_id=%s", pid)
                         wrote_this_round += 1
                         total_written += 1
                         last_progress = time.time()
@@ -333,6 +337,7 @@ def main() -> None:
                     )
                     for pid in kept_photo_ids:
                         processed.add(pid)
+                        LOGGER.info("wrote photo_id=%s", pid)
                     wrote_this_round += len(kept_photo_ids)
                     total_written += len(kept_photo_ids)
                     last_progress = time.time()
