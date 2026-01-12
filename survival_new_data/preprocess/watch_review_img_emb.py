@@ -229,6 +229,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--batch-size", type=int, default=32)
     p.add_argument("--device", type=str, default="auto", choices=["auto", "cpu", "cuda"])
     p.add_argument("--poll-seconds", type=float, default=5.0, help="No new embeddings -> sleep this many seconds.")
+    p.add_argument("--heartbeat-seconds", type=float, default=60.0, help="Print a heartbeat log every N seconds while idle.")
     p.add_argument("--idle-exit-seconds", type=float, default=600.0, help="Exit if no progress for this long.")
     p.add_argument("--keep-missing", action="store_true", help="If no images found, write zero vector (not recommended while downloading).")
     p.add_argument("--verbose", action="store_true")
@@ -268,25 +269,30 @@ def main() -> None:
 
     writer: Optional[pq.ParquetWriter] = None
     last_progress = time.time()
+    last_heartbeat = time.time()
     total_written = 0
     missing = 0
     errors = 0
+    missing_once: Set[str] = set()
 
     try:
         while True:
             wrote_this_round = 0
+            scanned = 0
 
             for item in _iter_manifest_items(
                 manifest,
                 image_dir=image_dir,
                 max_images_per_review=int(args.max_images_per_review),
             ):
+                scanned += 1
                 if item.review_id in processed:
                     continue
 
                 emb = None
                 try:
                     if item.paths:
+                        LOGGER.info("encoding review_id=%s n_images=%d", item.review_id, len(item.paths))
                         emb = _encode_images(
                             model,
                             preprocess,
@@ -295,7 +301,9 @@ def main() -> None:
                             batch_size=int(args.batch_size),
                         )
                     if emb is None:
-                        missing += 1
+                        if item.review_id not in missing_once:
+                            missing += 1
+                            missing_once.add(item.review_id)
                         if not args.keep_missing:
                             continue
                         emb = np.zeros((img_dim,), dtype=np.float32)
@@ -305,6 +313,7 @@ def main() -> None:
                     wrote_this_round += 1
                     total_written += 1
                     last_progress = time.time()
+                    LOGGER.info("wrote review_id=%s (total_written=%d)", item.review_id, total_written)
                     if total_written % 5000 == 0:
                         LOGGER.info("written=%d processed=%d missing_seen=%d errors=%d", total_written, len(processed), missing, errors)
                 except Exception as exc:
@@ -317,6 +326,17 @@ def main() -> None:
                 continue
 
             idle = time.time() - last_progress
+            if time.time() - last_heartbeat >= float(args.heartbeat_seconds):
+                LOGGER.info(
+                    "idle %.1fs (no new embeddings); scanned=%d processed=%d missing_seen=%d errors=%d; sleep=%.1fs",
+                    idle,
+                    scanned,
+                    len(processed),
+                    missing,
+                    errors,
+                    float(args.poll_seconds),
+                )
+                last_heartbeat = time.time()
             if idle >= float(args.idle_exit_seconds):
                 LOGGER.info("no progress for %.1fs; exiting. out=%s", idle, out_path)
                 break
