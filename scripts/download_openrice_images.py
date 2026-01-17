@@ -340,10 +340,15 @@ def download_for_selected(
     workers: int,
     max_pending: int,
     scan_existing: bool,
+    log_every_s: float,
     logger: logging.Logger,
 ) -> None:
+    selected_list = list(selected)
+    total_reviews = len(selected_list)
+
     requested_images = 0
     success_images = 0
+    failed_images = 0
     skipped_existing = 0
     skipped_duplicate = 0
     reviews_seen = 0
@@ -368,9 +373,38 @@ def download_for_selected(
     if max_pending <= 0:
         max_pending = max(50, workers * 20)
 
+    start_ts = time.monotonic()
+    last_log_ts = start_ts
+
+    def log_progress(*, force: bool = False) -> None:
+        nonlocal last_log_ts
+        now = time.monotonic()
+        if not force and log_every_s > 0 and (now - last_log_ts) < log_every_s:
+            return
+        last_log_ts = now
+
+        done_images = success_images + failed_images
+        elapsed = max(1e-6, now - start_ts)
+        img_rate = done_images / elapsed
+        review_pct = (reviews_seen / total_reviews * 100.0) if total_reviews else 100.0
+        logger.info(
+            "Progress: reviews %d/%d (%.2f%%) | images done=%d (ok=%d fail=%d) | queued=%d | requested=%d | skipped_exist=%d skipped_dup=%d | %.2f img/s",
+            reviews_seen,
+            total_reviews,
+            review_pct,
+            done_images,
+            success_images,
+            failed_images,
+            len(futures),
+            requested_images,
+            skipped_existing,
+            skipped_duplicate,
+            img_rate,
+        )
+
     futures: Set[Future] = set()
     with ThreadPoolExecutor(max_workers=workers) as executor:
-        for r in selected:
+        for r in selected_list:
             reviews_seen += 1
             plan = extract_image_plan(
                 r.review_imgsrc,
@@ -402,21 +436,16 @@ def download_for_selected(
                         try:
                             if fut.result():
                                 success_images += 1
+                            else:
+                                failed_images += 1
                         except Exception as exc:
+                            failed_images += 1
                             logger.warning("Download task failed: %s", exc)
+                    log_progress()
 
                 futures.add(executor.submit(worker, img_url, save_path))
 
-            if reviews_seen % 200 == 0:
-                logger.info(
-                    "Processed %d reviews | queued=%d ok=%d requested=%d skipped_existing=%d skipped_duplicate=%d",
-                    reviews_seen,
-                    len(futures),
-                    success_images,
-                    requested_images,
-                    skipped_existing,
-                    skipped_duplicate,
-                )
+            log_progress()
 
         if futures:
             done, _ = wait(futures)
@@ -424,13 +453,18 @@ def download_for_selected(
                 try:
                     if fut.result():
                         success_images += 1
+                    else:
+                        failed_images += 1
                 except Exception as exc:
+                    failed_images += 1
                     logger.warning("Download task failed: %s", exc)
 
     logger.info("===== 完成 =====")
+    log_progress(force=True)
     logger.info("评论数: %d", reviews_seen)
     logger.info("请求图片数: %d", requested_images)
     logger.info("成功下载: %d", success_images)
+    logger.info("失败: %d", failed_images)
     logger.info("跳过已存在: %d", skipped_existing)
     logger.info("跳过重复photo_id: %d", skipped_duplicate)
     if requested_images:
@@ -533,6 +567,12 @@ def parse_args() -> argparse.Namespace:
         help="最多积压任务数（0 自适应），用于防止内存堆积",
     )
     p.add_argument(
+        "--log-every-s",
+        type=float,
+        default=10.0,
+        help="每隔多少秒打印一次进度（<=0 表示尽量频繁打印）",
+    )
+    p.add_argument(
         "--no-scan-existing",
         action="store_true",
         help="不预扫描 out-dir 中已存在的 photo_id（默认会扫描，用于更好跳过重复/已下载图片）",
@@ -583,6 +623,7 @@ def main() -> None:
         workers=args.workers,
         max_pending=args.max_pending,
         scan_existing=not args.no_scan_existing,
+        log_every_s=args.log_every_s,
         logger=logger,
     )
 
