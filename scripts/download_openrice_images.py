@@ -7,11 +7,13 @@ import logging
 import math
 import os
 import random
+import threading
 import time
 import urllib.request
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass
 from pathlib import Path
-from typing import DefaultDict, Iterable, List, Optional, Tuple
+from typing import DefaultDict, Iterable, List, Optional, Set, Tuple
 
 import pandas as pd
 
@@ -30,6 +32,20 @@ HEADERS = {
     "Accept": "image/webp,image/apng,image/*,*/*;q=0.8",
     "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
 }
+
+KNOWN_IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp")
+
+_thread_local = threading.local()
+
+
+def _get_requests_session():
+    if requests is None:
+        return None
+    session = getattr(_thread_local, "session", None)
+    if session is None:
+        session = requests.Session()
+        _thread_local.session = session
+    return session
 
 
 def _as_int(value: object) -> int:
@@ -103,11 +119,40 @@ def build_image_path(out_dir: Path, photo_id: str, img_url: str) -> Path:
     return out_dir / f"{photo_id}{ext}"
 
 
+def scan_existing_photo_ids(out_dir: Path, logger: logging.Logger) -> Set[str]:
+    """Return a set of photo_id derived from filenames in out_dir.
+
+    Uses Path.stem so duplicates with different extensions are treated as the same photo.
+    """
+    photo_ids: Set[str] = set()
+    if not out_dir.exists():
+        return photo_ids
+    try:
+        for entry in out_dir.iterdir():
+            if entry.is_file():
+                stem = entry.stem.strip()
+                if stem:
+                    photo_ids.add(stem)
+    except Exception as exc:
+        logger.warning("Failed to scan existing images in %s: %s", out_dir, exc)
+    return photo_ids
+
+
+def photo_id_already_downloaded(out_dir: Path, photo_id: str, existing_photo_ids: Optional[Set[str]]) -> bool:
+    if existing_photo_ids is not None and photo_id in existing_photo_ids:
+        return True
+    for ext in KNOWN_IMAGE_EXTS:
+        if (out_dir / f"{photo_id}{ext}").exists():
+            return True
+    return False
+
+
 def download_image(url: str, save_path: Path, max_retries: int, logger: logging.Logger) -> bool:
     for attempt in range(max_retries):
         try:
             if requests is not None:
-                resp = requests.get(url, timeout=20, stream=True, headers=HEADERS)
+                session = _get_requests_session()
+                resp = session.get(url, timeout=20, stream=True, headers=HEADERS)  # type: ignore[union-attr]
                 status = resp.status_code
                 if status == 200:
                     with save_path.open("wb") as f:
@@ -292,51 +337,104 @@ def download_for_selected(
     min_delay_s: float,
     max_delay_s: float,
     max_retries: int,
+    workers: int,
+    max_pending: int,
+    scan_existing: bool,
     logger: logging.Logger,
 ) -> None:
-    total_images = 0
+    requested_images = 0
     success_images = 0
+    skipped_existing = 0
+    skipped_duplicate = 0
     reviews_seen = 0
 
     create_directory(out_dir)
 
-    for r in selected:
-        reviews_seen += 1
-        plan = extract_image_plan(
-            r.review_imgsrc,
-            r.review_photo_id,
-            max_images=max_images_per_review,
-            logger=logger,
-            review_id=r.review_id,
-        )
-        if not plan:
-            continue
+    existing_photo_ids: Optional[Set[str]] = None
+    if scan_existing:
+        logger.info("Scanning existing images in %s ...", out_dir.resolve())
+        existing_photo_ids = scan_existing_photo_ids(out_dir, logger=logger)
+        logger.info("Found %d existing photo_id", len(existing_photo_ids))
 
-        for img_url, photo_id in plan:
-            total_images += 1
-            save_path = build_image_path(out_dir, photo_id, img_url)
-            if save_path.exists():
-                success_images += 1
+    seen_photo_ids: Set[str] = set(existing_photo_ids or ())
+
+    def worker(img_url: str, save_path: Path) -> bool:
+        if min_delay_s > 0 or max_delay_s > 0:
+            time.sleep(random.uniform(min_delay_s, max_delay_s))
+        return download_image(img_url, save_path, max_retries=max_retries, logger=logger)
+
+    if workers <= 0:
+        workers = 1
+    if max_pending <= 0:
+        max_pending = max(50, workers * 20)
+
+    futures: Set[Future] = set()
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        for r in selected:
+            reviews_seen += 1
+            plan = extract_image_plan(
+                r.review_imgsrc,
+                r.review_photo_id,
+                max_images=max_images_per_review,
+                logger=logger,
+                review_id=r.review_id,
+            )
+            if not plan:
                 continue
 
-            time.sleep(random.uniform(min_delay_s, max_delay_s))
-            if download_image(img_url, save_path, max_retries=max_retries, logger=logger):
-                success_images += 1
+            for img_url, photo_id in plan:
+                if photo_id in seen_photo_ids:
+                    skipped_duplicate += 1
+                    continue
 
-        if reviews_seen % 200 == 0:
-            logger.info(
-                "已处理 %d 条评论，成功下载 %d/%d 张图片",
-                reviews_seen,
-                success_images,
-                total_images,
-            )
+                if photo_id_already_downloaded(out_dir, photo_id, existing_photo_ids):
+                    seen_photo_ids.add(photo_id)
+                    skipped_existing += 1
+                    continue
+
+                seen_photo_ids.add(photo_id)
+                save_path = build_image_path(out_dir, photo_id, img_url)
+                requested_images += 1
+
+                while len(futures) >= max_pending:
+                    done, futures = wait(futures, return_when=FIRST_COMPLETED)
+                    for fut in done:
+                        try:
+                            if fut.result():
+                                success_images += 1
+                        except Exception as exc:
+                            logger.warning("Download task failed: %s", exc)
+
+                futures.add(executor.submit(worker, img_url, save_path))
+
+            if reviews_seen % 200 == 0:
+                logger.info(
+                    "Processed %d reviews | queued=%d ok=%d requested=%d skipped_existing=%d skipped_duplicate=%d",
+                    reviews_seen,
+                    len(futures),
+                    success_images,
+                    requested_images,
+                    skipped_existing,
+                    skipped_duplicate,
+                )
+
+        if futures:
+            done, _ = wait(futures)
+            for fut in done:
+                try:
+                    if fut.result():
+                        success_images += 1
+                except Exception as exc:
+                    logger.warning("Download task failed: %s", exc)
 
     logger.info("===== 完成 =====")
     logger.info("评论数: %d", reviews_seen)
-    logger.info("请求图片数: %d", total_images)
+    logger.info("请求图片数: %d", requested_images)
     logger.info("成功下载: %d", success_images)
-    if total_images:
-        logger.info("成功率: %.2f%%", success_images / total_images * 100)
+    logger.info("跳过已存在: %d", skipped_existing)
+    logger.info("跳过重复photo_id: %d", skipped_duplicate)
+    if requested_images:
+        logger.info("成功率: %.2f%%", success_images / requested_images * 100)
 
 
 def write_selected_manifest(selected: List[SelectedReview], out_dir: Path) -> Path:
@@ -427,6 +525,18 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--min-delay-s", type=float, default=0.05, help="每次请求前最小随机延迟（秒）")
     p.add_argument("--max-delay-s", type=float, default=0.3, help="每次请求前最大随机延迟（秒）")
     p.add_argument("--max-retries", type=int, default=5, help="单张图片最大重试次数")
+    p.add_argument("--workers", type=int, default=8, help="并发下载线程数（<=0 视为 1）")
+    p.add_argument(
+        "--max-pending",
+        type=int,
+        default=0,
+        help="最多积压任务数（0 自适应），用于防止内存堆积",
+    )
+    p.add_argument(
+        "--no-scan-existing",
+        action="store_true",
+        help="不预扫描 out-dir 中已存在的 photo_id（默认会扫描，用于更好跳过重复/已下载图片）",
+    )
     return p.parse_args()
 
 
@@ -470,6 +580,9 @@ def main() -> None:
         min_delay_s=min(args.min_delay_s, args.max_delay_s),
         max_delay_s=max(args.min_delay_s, args.max_delay_s),
         max_retries=args.max_retries,
+        workers=args.workers,
+        max_pending=args.max_pending,
+        scan_existing=not args.no_scan_existing,
         logger=logger,
     )
 
