@@ -46,6 +46,11 @@ LOGGER = logging.getLogger(__name__)
 
 IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp")
 
+def _build_review_img_emb_schema(img_dim: int) -> pa.Schema:
+    fields = [pa.field("review_id", pa.string())]
+    fields.extend([pa.field(f"img_emb_{i}", pa.float32()) for i in range(int(img_dim))])
+    return pa.schema(fields)
+
 
 def _get_project_root() -> Path:
     current = Path(__file__).resolve()
@@ -330,6 +335,7 @@ def main() -> None:
 
     model, preprocess, img_dim = _load_resnet18_encoder(device=device)
     LOGGER.info("encoder=resnet18 img_dim=%d", img_dim)
+    table_schema = _build_review_img_emb_schema(img_dim)
 
     writer: Optional[pq.ParquetWriter] = None
     shard_index = 0
@@ -346,7 +352,7 @@ def main() -> None:
     pending_ids: List[str] = []
     pending_embs: List[np.ndarray] = []
 
-    def _open_new_shard(*, schema: pa.Schema) -> None:
+    def _open_new_shard() -> None:
         nonlocal writer, shard_index, shard_rows, shard_write_path, shard_tmp_path
         assert out_dir is not None
         shard_rows = 0
@@ -357,9 +363,9 @@ def main() -> None:
             assert shard_tmp_path is not None
             if shard_tmp_path.exists():
                 shard_tmp_path.unlink()
-            writer = pq.ParquetWriter(shard_tmp_path, schema, compression=compression)
+            writer = pq.ParquetWriter(shard_tmp_path, table_schema, compression=compression)
         else:
-            writer = pq.ParquetWriter(shard_write_path, schema, compression=compression)
+            writer = pq.ParquetWriter(shard_write_path, table_schema, compression=compression)
 
     def _close_shard() -> None:
         nonlocal writer, shard_write_path, shard_tmp_path
@@ -402,12 +408,7 @@ def main() -> None:
                 end = total
             else:
                 if writer is None:
-                    # Create schema from the first batch slice.
-                    data0: Dict[str, object] = {"review_id": [str(ids[offset])]}
-                    for i in range(img_dim):
-                        data0[f"img_emb_{i}"] = [float(embs[offset, i])]
-                    schema = pa.Table.from_pydict(data0).schema
-                    _open_new_shard(schema=schema)
+                    _open_new_shard()
 
                 remaining_in_shard = shard_size - shard_rows
                 if remaining_in_shard <= 0:
@@ -416,16 +417,16 @@ def main() -> None:
                 end = min(total, offset + remaining_in_shard)
 
             chunk_ids = [str(x) for x in ids[offset:end]]
-            chunk_embs = embs[offset:end]
+            chunk_embs = np.asarray(embs[offset:end], dtype=np.float32, order="C")
 
-            data: Dict[str, object] = {"review_id": chunk_ids}
+            arrays: List[pa.Array] = [pa.array(chunk_ids, type=pa.string())]
             for i in range(img_dim):
-                data[f"img_emb_{i}"] = chunk_embs[:, i]
-            table = pa.Table.from_pydict(data)
+                arrays.append(pa.array(chunk_embs[:, i], type=pa.float32()))
+            table = pa.Table.from_arrays(arrays, schema=table_schema)
 
             if out_dir is None:
                 if writer is None:
-                    writer = pq.ParquetWriter(write_path, table.schema, compression=compression)
+                    writer = pq.ParquetWriter(write_path, table_schema, compression=compression)
                 writer.write_table(table)
             else:
                 assert writer is not None
