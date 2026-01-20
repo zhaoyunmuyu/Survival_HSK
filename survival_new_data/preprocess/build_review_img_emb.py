@@ -421,13 +421,13 @@ def main() -> None:
             max_total_images=int(getattr(args, "max_total_images", 0) or 0),
         ):
             processed_reviews += 1
-            try:
-                if getattr(args, "log_each_review", False):
-                    LOGGER.info("review=%d review_id=%s images=%d", processed_reviews, item.review_id, len(item.paths))
-                    if getattr(args, "log_image_paths", False):
-                        for p in item.paths:
-                            LOGGER.info("  img=%s", p)
+            if getattr(args, "log_each_review", False):
+                LOGGER.info("review=%d review_id=%s images=%d", processed_reviews, item.review_id, len(item.paths))
+                if getattr(args, "log_image_paths", False):
+                    for p in item.paths:
+                        LOGGER.info("  img=%s", p)
 
+            try:
                 t0 = time.monotonic()
                 emb = _encode_images(
                     model,
@@ -437,29 +437,32 @@ def main() -> None:
                     batch_size=int(args.batch_size),
                 )
                 dt = time.monotonic() - t0
-                if emb is None:
-                    missing += 1
-                    if getattr(args, "log_each_review", False):
-                        LOGGER.info("review=%d review_id=%s missing_images dt=%.3fs", processed_reviews, item.review_id, dt)
-                    if not args.keep_missing:
-                        continue
-                    emb = np.zeros((img_dim,), dtype=np.float32)
-
-                pending_ids.append(str(item.review_id))
-                pending_embs.append(np.asarray(emb, dtype=np.float32).reshape(-1))
-                if len(pending_ids) >= write_batch_size:
-                    _flush()
-
-                if getattr(args, "log_each_review", False):
-                    LOGGER.info("review=%d review_id=%s encoded=1 dt=%.3fs", processed_reviews, item.review_id, dt)
-
-                written = kept + len(pending_ids)
-                if written > 0 and written % 5000 == 0:
-                    LOGGER.info("written=%d missing=%d errors=%d", written, missing, errors)
             except Exception as exc:
                 errors += 1
                 if errors <= 10:
-                    LOGGER.warning("failed review_id=%s: %s", item.review_id, exc)
+                    LOGGER.warning("failed to encode review_id=%s: %s", item.review_id, exc)
+                continue
+
+            if emb is None:
+                missing += 1
+                if getattr(args, "log_each_review", False):
+                    LOGGER.info("review=%d review_id=%s missing_images dt=%.3fs", processed_reviews, item.review_id, dt)
+                if not args.keep_missing:
+                    continue
+                emb = np.zeros((img_dim,), dtype=np.float32)
+
+            pending_ids.append(str(item.review_id))
+            pending_embs.append(np.asarray(emb, dtype=np.float32).reshape(-1))
+            if len(pending_ids) >= write_batch_size:
+                # Important: do NOT swallow write errors; otherwise you can end up with an empty/truncated .tmp file.
+                _flush()
+
+            if getattr(args, "log_each_review", False):
+                LOGGER.info("review=%d review_id=%s encoded=1 dt=%.3fs", processed_reviews, item.review_id, dt)
+
+            written = kept + len(pending_ids)
+            if written > 0 and written % 5000 == 0:
+                LOGGER.info("written=%d missing=%d errors=%d", written, missing, errors)
 
     finally:
         _flush()
