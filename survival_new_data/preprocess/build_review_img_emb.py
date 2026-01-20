@@ -237,9 +237,14 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--write-batch-size", type=int, default=2048, help="Parquet 写入 batch 大小（越大越快，默认 2048）")
     p.add_argument("--compression", type=str, default="zstd", help="Parquet 压缩：zstd/snappy/none（默认 zstd）")
     p.add_argument(
+        "--atomic-write",
+        action="store_true",
+        help="先写入临时 parquet 文件，校验通过后再替换为最终输出（更安全但会产生 *.tmp）",
+    )
+    p.add_argument(
         "--no-atomic-write",
         action="store_true",
-        help="默认先写入临时 parquet 文件，成功后再替换为最终输出；加此参数将直接写 out",
+        help="已废弃：默认就是边写边落盘，不生成 tmp 文件（保留此参数仅为兼容旧命令）",
     )
     p.add_argument(
         "--shard-size",
@@ -274,6 +279,8 @@ def main() -> None:
         out_path = _default_output_path()
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
+    atomic_write = bool(getattr(args, "atomic_write", False))
+
     shard_size = max(0, int(getattr(args, "shard_size", 0) or 0))
     if shard_size > 0:
         # Treat out_path as a directory target (a dataset made of many parquet files).
@@ -290,7 +297,11 @@ def main() -> None:
                     f"Use --overwrite to replace."
                 )
         else:
-            for p in list(out_dir.glob("*.parquet")) + list(out_dir.glob("*_metadata")):
+            for p in (
+                list(out_dir.glob("*.parquet"))
+                + list(out_dir.glob("*.parquet.tmp"))
+                + list(out_dir.glob("*_metadata"))
+            ):
                 try:
                     p.unlink()
                 except Exception:
@@ -301,7 +312,7 @@ def main() -> None:
 
     write_path = out_path
     tmp_path: Optional[Path] = None
-    if shard_size <= 0 and not getattr(args, "no_atomic_write", False):
+    if shard_size <= 0 and atomic_write:
         write_path = out_path.with_suffix(out_path.suffix + ".tmp")
         tmp_path = write_path
         if write_path.exists():
@@ -340,11 +351,15 @@ def main() -> None:
         assert out_dir is not None
         shard_rows = 0
         shard_write_path = out_dir / f"part-{shard_index:05d}.parquet"
-        shard_tmp_path = shard_write_path.with_suffix(".parquet.tmp")
+        shard_tmp_path = shard_write_path.with_suffix(".parquet.tmp") if atomic_write else None
         shard_index += 1
-        if shard_tmp_path.exists():
-            shard_tmp_path.unlink()
-        writer = pq.ParquetWriter(shard_tmp_path, schema, compression=compression)
+        if atomic_write:
+            assert shard_tmp_path is not None
+            if shard_tmp_path.exists():
+                shard_tmp_path.unlink()
+            writer = pq.ParquetWriter(shard_tmp_path, schema, compression=compression)
+        else:
+            writer = pq.ParquetWriter(shard_write_path, schema, compression=compression)
 
     def _close_shard() -> None:
         nonlocal writer, shard_write_path, shard_tmp_path
@@ -352,13 +367,24 @@ def main() -> None:
             return
         writer.close()
         writer = None
-        if shard_write_path is None or shard_tmp_path is None:
+        if shard_write_path is None:
             return
-        # Ensure footer is readable before publishing.
-        with shard_tmp_path.open("rb") as f:
-            pf = pq.ParquetFile(f)
-            _ = pf.metadata.num_rows
-        os.replace(str(shard_tmp_path), str(shard_write_path))
+        if atomic_write:
+            if shard_tmp_path is None:
+                return
+            # Ensure footer is readable before publishing.
+            with shard_tmp_path.open("rb") as f:
+                pf = pq.ParquetFile(f)
+                _ = pf.metadata.num_rows
+            os.replace(str(shard_tmp_path), str(shard_write_path))
+        else:
+            # Best-effort validation (file already in place).
+            try:
+                with shard_write_path.open("rb") as f:
+                    pf = pq.ParquetFile(f)
+                    _ = pf.metadata.num_rows
+            except Exception as exc:
+                raise RuntimeError(f"Shard parquet seems corrupted: {shard_write_path}: {exc}") from exc
 
     def _flush() -> None:
         nonlocal writer, kept, pending_ids, pending_embs, shard_rows
@@ -472,7 +498,7 @@ def main() -> None:
         else:
             _close_shard()
 
-    if out_dir is None and tmp_path is not None and tmp_path.exists():
+    if out_dir is None and atomic_write and tmp_path is not None and tmp_path.exists():
         with tmp_path.open("rb") as f:
             pf = pq.ParquetFile(f)
             _ = pf.metadata.num_rows
