@@ -26,6 +26,7 @@ import argparse
 import csv
 import logging
 import os
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
@@ -109,9 +110,13 @@ def _iter_reviews_from_manifest(
     *,
     image_dir: Path,
     max_images_per_review: int,
+    max_reviews: int = 0,
+    max_total_images: int = 0,
 ) -> Iterable[ReviewImages]:
     with manifest_path.open("r", encoding="utf-8", newline="") as f:
         reader = csv.DictReader(f)
+        yielded = 0
+        images_used = 0
         for row in reader:
             review_id = str(row.get("review_id", "")).strip()
             if not review_id:
@@ -129,7 +134,19 @@ def _iter_reviews_from_manifest(
                 p = _find_existing_image(image_dir, photo_id, url)
                 if p is not None:
                     paths.append(p)
+            if max_total_images and images_used >= max_total_images:
+                break
+            if max_total_images:
+                remaining = max_total_images - images_used
+                if remaining <= 0:
+                    break
+                if len(paths) > remaining:
+                    paths = paths[:remaining]
             yield ReviewImages(review_id=review_id, paths=tuple(paths))
+            yielded += 1
+            images_used += len(paths)
+            if max_reviews and yielded >= max_reviews:
+                break
 
 
 def _load_resnet18_encoder(*, device: torch.device) -> Tuple[nn.Module, object, int]:
@@ -215,6 +232,17 @@ def parse_args() -> argparse.Namespace:
     )
     p.add_argument("--max-images-per-review", type=int, default=1, help="每条评论最多使用多少张图片（需与下载时一致）")
     p.add_argument("--batch-size", type=int, default=32, help="图片编码 batch size（每条评论内部也会分批）")
+    p.add_argument("--max-reviews", type=int, default=0, help="最多处理多少条评论（0 表示不限制，用于快速试跑）")
+    p.add_argument("--max-total-images", type=int, default=0, help="最多向量化多少张图片（0 表示不限制，用于快速试跑）")
+    p.add_argument("--write-batch-size", type=int, default=2048, help="Parquet 写入 batch 大小（越大越快，默认 2048）")
+    p.add_argument("--compression", type=str, default="zstd", help="Parquet 压缩：zstd/snappy/none（默认 zstd）")
+    p.add_argument(
+        "--no-atomic-write",
+        action="store_true",
+        help="默认先写入临时 parquet 文件，成功后再替换为最终输出；加此参数将直接写 out",
+    )
+    p.add_argument("--log-each-review", action="store_true", help="打印每条评论的向量化过程（非常啰嗦）")
+    p.add_argument("--log-image-paths", action="store_true", help="配合 --log-each-review：额外打印每张图片路径")
     p.add_argument("--device", type=str, default="auto", choices=["auto", "cpu", "cuda"], help="auto 优先使用 CUDA")
     p.add_argument("--keep-missing", action="store_true", help="即使没有找到图片也写入全 0 向量（默认不写）")
     p.add_argument("--verbose", action="store_true")
@@ -235,6 +263,14 @@ def main() -> None:
         out_path = _default_output_path()
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
+    write_path = out_path
+    tmp_path: Optional[Path] = None
+    if not getattr(args, "no_atomic_write", False):
+        write_path = out_path.with_suffix(out_path.suffix + ".tmp")
+        tmp_path = write_path
+        if write_path.exists():
+            write_path.unlink()
+
     if not manifest.exists():
         raise FileNotFoundError(f"manifest not found: {manifest}")
     if not image_dir.exists():
@@ -249,17 +285,52 @@ def main() -> None:
     LOGGER.info("encoder=resnet18 img_dim=%d", img_dim)
 
     writer: Optional[pq.ParquetWriter] = None
+    write_batch_size = max(1, int(getattr(args, "write_batch_size", 2048)))
+    compression_raw = str(getattr(args, "compression", "zstd")).lower()
+    compression = None if compression_raw in {"", "none", "null"} else compression_raw
     kept = 0
     missing = 0
     errors = 0
 
+    pending_ids: List[str] = []
+    pending_embs: List[np.ndarray] = []
+
+    def _flush() -> None:
+        nonlocal writer, kept, pending_ids, pending_embs
+        if not pending_ids:
+            return
+        ids = pending_ids
+        embs = np.stack(pending_embs, axis=0).astype(np.float32, copy=False)  # [N, D]
+        pending_ids = []
+        pending_embs = []
+
+        data: Dict[str, object] = {"review_id": ids}
+        for i in range(img_dim):
+            data[f"img_emb_{i}"] = embs[:, i]
+        table = pa.Table.from_pydict(data)
+        if writer is None:
+            writer = pq.ParquetWriter(write_path, table.schema, compression=compression)
+        writer.write_table(table)
+        kept += len(ids)
+
+    processed_reviews = 0
     try:
         for item in _iter_reviews_from_manifest(
             manifest,
             image_dir=image_dir,
             max_images_per_review=int(args.max_images_per_review),
+            max_reviews=int(getattr(args, "max_reviews", 0) or 0),
+            max_total_images=int(getattr(args, "max_total_images", 0) or 0),
         ):
+            processed_reviews += 1
             try:
+                if getattr(args, "log_each_review", False):
+                    LOGGER.info("review=%d review_id=%s images=%d", processed_reviews, item.review_id, len(item.paths))
+                    if getattr(args, "log_image_paths", False):
+                        for p in item.paths:
+                            LOGGER.info("  img=%s", p)
+
+                t0 = time.monotonic()
                 emb = _encode_images(
                     model,
                     preprocess,
@@ -267,34 +338,43 @@ def main() -> None:
                     device=device,
                     batch_size=int(args.batch_size),
                 )
+                dt = time.monotonic() - t0
                 if emb is None:
                     missing += 1
+                    if getattr(args, "log_each_review", False):
+                        LOGGER.info("review=%d review_id=%s missing_images dt=%.3fs", processed_reviews, item.review_id, dt)
                     if not args.keep_missing:
                         continue
                     emb = np.zeros((img_dim,), dtype=np.float32)
 
-                # pyarrow>=17: Table.from_pydict expects array-like values (scalars will error).
-                data: Dict[str, object] = {"review_id": [item.review_id]}
-                for i in range(img_dim):
-                    data[f"img_emb_{i}"] = [float(emb[i])]
+                pending_ids.append(str(item.review_id))
+                pending_embs.append(np.asarray(emb, dtype=np.float32).reshape(-1))
+                if len(pending_ids) >= write_batch_size:
+                    _flush()
 
-                table = pa.Table.from_pydict(data)
-                if writer is None:
-                    writer = pq.ParquetWriter(out_path, table.schema)
-                writer.write_table(table)
-                kept += 1
-                if kept % 5000 == 0:
-                    LOGGER.info("processed=%d kept=%d missing=%d errors=%d", kept + missing, kept, missing, errors)
+                if getattr(args, "log_each_review", False):
+                    LOGGER.info("review=%d review_id=%s encoded=1 dt=%.3fs", processed_reviews, item.review_id, dt)
+
+                written = kept + len(pending_ids)
+                if written > 0 and written % 5000 == 0:
+                    LOGGER.info("written=%d missing=%d errors=%d", written, missing, errors)
             except Exception as exc:
                 errors += 1
                 if errors <= 10:
                     LOGGER.warning("failed review_id=%s: %s", item.review_id, exc)
 
     finally:
+        _flush()
         if writer is not None:
             writer.close()
 
-    LOGGER.info("DONE out=%s kept=%d missing=%d errors=%d", out_path, kept, missing, errors)
+    if tmp_path is not None and tmp_path.exists():
+        with tmp_path.open("rb") as f:
+            pf = pq.ParquetFile(f)
+            _ = pf.metadata.num_rows
+        os.replace(str(tmp_path), str(out_path))
+
+    LOGGER.info("DONE out=%s written=%d missing=%d errors=%d", out_path, kept, missing, errors)
 
 
 if __name__ == "__main__":
