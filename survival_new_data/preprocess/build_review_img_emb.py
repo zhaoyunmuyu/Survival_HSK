@@ -241,6 +241,17 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="默认先写入临时 parquet 文件，成功后再替换为最终输出；加此参数将直接写 out",
     )
+    p.add_argument(
+        "--shard-size",
+        type=int,
+        default=0,
+        help="每个 parquet 分片最多写入多少条评论（0 表示不分片，写单文件）",
+    )
+    p.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="若输出已存在则覆盖（分片模式会清空输出目录内的 *.parquet 与 *_metadata 文件）",
+    )
     p.add_argument("--log-each-review", action="store_true", help="打印每条评论的向量化过程（非常啰嗦）")
     p.add_argument("--log-image-paths", action="store_true", help="配合 --log-each-review：额外打印每张图片路径")
     p.add_argument("--device", type=str, default="auto", choices=["auto", "cpu", "cuda"], help="auto 优先使用 CUDA")
@@ -263,9 +274,34 @@ def main() -> None:
         out_path = _default_output_path()
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
+    shard_size = max(0, int(getattr(args, "shard_size", 0) or 0))
+    if shard_size > 0:
+        # Treat out_path as a directory target (a dataset made of many parquet files).
+        out_dir = out_path
+        if out_dir.suffix.lower() == ".parquet":
+            out_dir = out_dir.with_suffix("")  # drop ".parquet"
+        out_dir = Path(str(out_dir) + ".parts")
+        out_dir.mkdir(parents=True, exist_ok=True)
+        if not args.overwrite:
+            existing = list(out_dir.glob("*.parquet"))
+            if existing:
+                raise FileExistsError(
+                    f"Output shard dir is not empty: {out_dir} (found {len(existing)} parquet files). "
+                    f"Use --overwrite to replace."
+                )
+        else:
+            for p in list(out_dir.glob("*.parquet")) + list(out_dir.glob("*_metadata")):
+                try:
+                    p.unlink()
+                except Exception:
+                    pass
+        LOGGER.info("shard_size=%d out_dir=%s", shard_size, out_dir)
+    else:
+        out_dir = None
+
     write_path = out_path
     tmp_path: Optional[Path] = None
-    if not getattr(args, "no_atomic_write", False):
+    if shard_size <= 0 and not getattr(args, "no_atomic_write", False):
         write_path = out_path.with_suffix(out_path.suffix + ".tmp")
         tmp_path = write_path
         if write_path.exists():
@@ -285,6 +321,10 @@ def main() -> None:
     LOGGER.info("encoder=resnet18 img_dim=%d", img_dim)
 
     writer: Optional[pq.ParquetWriter] = None
+    shard_index = 0
+    shard_rows = 0
+    shard_write_path: Optional[Path] = None
+    shard_tmp_path: Optional[Path] = None
     write_batch_size = max(1, int(getattr(args, "write_batch_size", 2048)))
     compression_raw = str(getattr(args, "compression", "zstd")).lower()
     compression = None if compression_raw in {"", "none", "null"} else compression_raw
@@ -295,8 +335,33 @@ def main() -> None:
     pending_ids: List[str] = []
     pending_embs: List[np.ndarray] = []
 
+    def _open_new_shard(*, schema: pa.Schema) -> None:
+        nonlocal writer, shard_index, shard_rows, shard_write_path, shard_tmp_path
+        assert out_dir is not None
+        shard_rows = 0
+        shard_write_path = out_dir / f"part-{shard_index:05d}.parquet"
+        shard_tmp_path = shard_write_path.with_suffix(".parquet.tmp")
+        shard_index += 1
+        if shard_tmp_path.exists():
+            shard_tmp_path.unlink()
+        writer = pq.ParquetWriter(shard_tmp_path, schema, compression=compression)
+
+    def _close_shard() -> None:
+        nonlocal writer, shard_write_path, shard_tmp_path
+        if writer is None:
+            return
+        writer.close()
+        writer = None
+        if shard_write_path is None or shard_tmp_path is None:
+            return
+        # Ensure footer is readable before publishing.
+        with shard_tmp_path.open("rb") as f:
+            pf = pq.ParquetFile(f)
+            _ = pf.metadata.num_rows
+        os.replace(str(shard_tmp_path), str(shard_write_path))
+
     def _flush() -> None:
-        nonlocal writer, kept, pending_ids, pending_embs
+        nonlocal writer, kept, pending_ids, pending_embs, shard_rows
         if not pending_ids:
             return
         ids = pending_ids
@@ -304,14 +369,47 @@ def main() -> None:
         pending_ids = []
         pending_embs = []
 
-        data: Dict[str, object] = {"review_id": ids}
-        for i in range(img_dim):
-            data[f"img_emb_{i}"] = embs[:, i]
-        table = pa.Table.from_pydict(data)
-        if writer is None:
-            writer = pq.ParquetWriter(write_path, table.schema, compression=compression)
-        writer.write_table(table)
-        kept += len(ids)
+        offset = 0
+        total = len(ids)
+        while offset < total:
+            if out_dir is None:
+                end = total
+            else:
+                if writer is None:
+                    # Create schema from the first batch slice.
+                    data0: Dict[str, object] = {"review_id": [str(ids[offset])]}
+                    for i in range(img_dim):
+                        data0[f"img_emb_{i}"] = [float(embs[offset, i])]
+                    schema = pa.Table.from_pydict(data0).schema
+                    _open_new_shard(schema=schema)
+
+                remaining_in_shard = shard_size - shard_rows
+                if remaining_in_shard <= 0:
+                    _close_shard()
+                    continue
+                end = min(total, offset + remaining_in_shard)
+
+            chunk_ids = [str(x) for x in ids[offset:end]]
+            chunk_embs = embs[offset:end]
+
+            data: Dict[str, object] = {"review_id": chunk_ids}
+            for i in range(img_dim):
+                data[f"img_emb_{i}"] = chunk_embs[:, i]
+            table = pa.Table.from_pydict(data)
+
+            if out_dir is None:
+                if writer is None:
+                    writer = pq.ParquetWriter(write_path, table.schema, compression=compression)
+                writer.write_table(table)
+            else:
+                assert writer is not None
+                writer.write_table(table)
+                shard_rows += len(chunk_ids)
+                if shard_rows >= shard_size:
+                    _close_shard()
+
+            kept += len(chunk_ids)
+            offset = end
 
     processed_reviews = 0
     try:
@@ -365,16 +463,22 @@ def main() -> None:
 
     finally:
         _flush()
-        if writer is not None:
-            writer.close()
+        if out_dir is None:
+            if writer is not None:
+                writer.close()
+        else:
+            _close_shard()
 
-    if tmp_path is not None and tmp_path.exists():
+    if out_dir is None and tmp_path is not None and tmp_path.exists():
         with tmp_path.open("rb") as f:
             pf = pq.ParquetFile(f)
             _ = pf.metadata.num_rows
         os.replace(str(tmp_path), str(out_path))
 
-    LOGGER.info("DONE out=%s written=%d missing=%d errors=%d", out_path, kept, missing, errors)
+    if out_dir is None:
+        LOGGER.info("DONE out=%s written=%d missing=%d errors=%d", out_path, kept, missing, errors)
+    else:
+        LOGGER.info("DONE out_dir=%s written=%d missing=%d errors=%d", out_dir, kept, missing, errors)
 
 
 if __name__ == "__main__":
