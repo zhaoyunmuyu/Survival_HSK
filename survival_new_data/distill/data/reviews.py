@@ -21,7 +21,6 @@ from typing import Dict, Literal, Optional, Tuple
 
 import numpy as np
 import pandas as pd
-import pyarrow.dataset as ds
 import torch
 
 from survival_new_data.distill.data.io import resolve_data_path
@@ -76,19 +75,11 @@ def load_review_img_emb_df(*, data_dir: Optional[Path] = None, img_dim: int = 51
     - 若文件不存在，由调用方决定是否回退为全零。
     """
     path = resolve_data_path("review_img_emb.parquet", data_dir=data_dir)
-    parts_dir = Path(str(path.with_suffix("")) + ".parts")
     if not path.exists():
-        if parts_dir.exists() and parts_dir.is_dir():
-            path = parts_dir
-        else:
-            raise FileNotFoundError(f"review_img_emb.parquet not found at: {path} (or parts dir: {parts_dir})")
+        raise FileNotFoundError(f"review_img_emb.parquet not found at: {path}")
 
     cols = ["review_id"]
     cols.extend([f"img_emb_{i}" for i in range(int(img_dim))])
-    if path.is_dir():
-        dataset = ds.dataset(str(path), format="parquet")
-        table = dataset.to_table(columns=cols)
-        return table.to_pandas()
     return pd.read_parquet(path, columns=cols)
 
 
