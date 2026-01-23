@@ -84,31 +84,6 @@ def prepare_dataloaders_distill(
     review_df = review_df[review_df["restaurant_id"].isin(required_ids)]
     review_df = prepare_reviews_clean(review_df, time_step=time_step)  # type: ignore[arg-type]
 
-    # Rule: exclude restaurants with <3 distinct review years (train/val/test all apply).
-    review_year = pd.to_datetime(review_df["review_date"], errors="coerce").dt.year.fillna(0).astype(int)
-    year_counts = (
-        pd.DataFrame({"restaurant_id": review_df["restaurant_id"].astype(str), "review_year": review_year})
-        .query("review_year > 0")
-        .groupby("restaurant_id", sort=False)["review_year"]
-        .nunique()
-    )
-    valid_restaurant_ids = set(year_counts[year_counts >= 3].index.astype(str))
-    before = (len(train_df), len(val_df), len(test_df))
-    train_df = train_df[train_df["restaurant_id"].isin(valid_restaurant_ids)].copy()
-    val_df = val_df[val_df["restaurant_id"].isin(valid_restaurant_ids)].copy()
-    test_df = test_df[test_df["restaurant_id"].isin(valid_restaurant_ids)].copy()
-    review_df = review_df[review_df["restaurant_id"].isin(valid_restaurant_ids)].copy()
-    after = (len(train_df), len(val_df), len(test_df))
-    LOGGER.info(
-        "[HSK][Distill] Filter restaurants by review years >=3: train %d->%d, val %d->%d, test %d->%d",
-        before[0],
-        after[0],
-        before[1],
-        after[1],
-        before[2],
-        after[2],
-    )
-
     LOGGER.info("[HSK][Distill] Loading review_bert_emb ...")
     bert_df = load_review_bert_emb_df(data_dir=data_dir, text_dim=text_dim)
     bert_map = build_bert_vector_map(bert_df, text_dim=text_dim)
