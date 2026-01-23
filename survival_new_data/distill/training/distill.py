@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 from typing import Any, Dict, Optional, Tuple
 
@@ -83,10 +84,15 @@ def train_teacher(
     max_train_steps: Optional[int] = None,
     max_val_steps: Optional[int] = None,
     max_test_steps: Optional[int] = None,
+    configure_logging: bool = True,
 ) -> Tuple[nn.Module, Dict[str, Any]]:
     seed_everything()
-    log_path, logger = setup_logging(log_dir, log_filename)
-    logger.info("[HSK][Teacher] Logging to %s", log_path)
+    if configure_logging:
+        log_path, logger = setup_logging(log_dir, log_filename)
+        logger.info("[HSK][Teacher] Logging to %s", log_path)
+    else:
+        logger = logging.getLogger(__name__)
+        logger.setLevel(logging.INFO)
 
     model = model.to(device)
     optimizer = optim.Adam(model.parameters(), lr=lr, weight_decay=1e-5)
@@ -200,10 +206,15 @@ def train_student_distill(
     max_train_steps: Optional[int] = None,
     max_val_steps: Optional[int] = None,
     max_test_steps: Optional[int] = None,
+    configure_logging: bool = True,
 ) -> Tuple[nn.Module, Dict[str, Any]]:
     seed_everything()
-    log_path, logger = setup_logging(log_dir, log_filename)
-    logger.info("[HSK][Student] Logging to %s", log_path)
+    if configure_logging:
+        log_path, logger = setup_logging(log_dir, log_filename)
+        logger.info("[HSK][Student] Logging to %s", log_path)
+    else:
+        logger = logging.getLogger(__name__)
+        logger.setLevel(logging.INFO)
 
     student = student.to(device)
     teacher = teacher.to(device)

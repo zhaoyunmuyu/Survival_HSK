@@ -14,6 +14,7 @@ import torch
 from survival_new_data.distill.data import prepare_dataloaders_distill
 from survival_new_data.distill.models import MambaTeacher
 from survival_new_data.distill.training import train_teacher
+from survival_st_gcn.utils.logging import setup_logging
 
 
 def parse_args() -> argparse.Namespace:
@@ -42,6 +43,9 @@ def main() -> None:
     args = parse_args()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     data_dir = Path(args.data_dir) if args.data_dir else None
+
+    # Configure logging before data loading so loader progress (including image embeddings) is visible.
+    setup_logging(args.log_dir, args.log_filename)
 
     loaders = prepare_dataloaders_distill(
         batch_size=args.batch_size,
@@ -75,6 +79,7 @@ def main() -> None:
         max_train_steps=args.max_train_steps,
         max_val_steps=args.max_val_steps,
         max_test_steps=args.max_test_steps,
+        configure_logging=False,
     )
 
 
