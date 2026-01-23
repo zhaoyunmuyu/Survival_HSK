@@ -36,6 +36,25 @@ from survival_new_data.distill.data.io import resolve_data_path
 
 LOGGER = logging.getLogger(__name__)
 
+def _safe_stratify(y: Optional[pd.Series], *, logger: logging.Logger, context: str) -> Optional[pd.Series]:
+    if y is None:
+        return None
+    try:
+        vc = y.value_counts(dropna=False)
+        if vc.empty:
+            return None
+        if int(vc.min()) < 2:
+            logger.warning(
+                "[HSK][Distill] Disable stratify for %s (min class count <2): %s",
+                context,
+                vc.to_dict(),
+            )
+            return None
+    except Exception as exc:
+        logger.warning("[HSK][Distill] Disable stratify for %s due to error: %s", context, exc)
+        return None
+    return y
+
 
 def _load_restaurant_base_df(*, data_dir: Optional[Path] = None) -> pd.DataFrame:
     path = resolve_data_path("restaurant_base.parquet", data_dir=data_dir)
@@ -64,17 +83,27 @@ def prepare_dataloaders_distill(
         restaurant_df = restaurant_df.head(limit_restaurants).copy()
 
     label_col = "is_open"
+    stratify_y = _safe_stratify(
+        restaurant_df[label_col] if label_col in restaurant_df.columns else None,
+        logger=LOGGER,
+        context="train/temp split",
+    )
     train_df, temp_df = train_test_split(
         restaurant_df,
         test_size=0.2,
         random_state=42,
-        stratify=restaurant_df[label_col] if label_col in restaurant_df.columns else None,
+        stratify=stratify_y,
+    )
+    stratify_y2 = _safe_stratify(
+        temp_df[label_col] if label_col in temp_df.columns else None,
+        logger=LOGGER,
+        context="val/test split",
     )
     val_df, test_df = train_test_split(
         temp_df,
         test_size=0.5,
         random_state=42,
-        stratify=temp_df[label_col] if label_col in temp_df.columns else None,
+        stratify=stratify_y2,
     )
 
     LOGGER.info("[HSK][Distill] Loading reviews_clean ...")
