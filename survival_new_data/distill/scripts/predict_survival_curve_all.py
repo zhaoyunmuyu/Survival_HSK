@@ -19,7 +19,9 @@
     --marker-size 1.0 --marker-every 4 --plot-smooth-window 5 ^
     --fig-width 7 --fig-height 3.5
 """
-python -m survival_new_data.distill.scripts.predict_survival_curve_all --model student --checkpoint checkpoints_hsk_distill/student_best.pt --data-dir /nvme01/gvm0/hsk/data --time-step quarter --out-dir plots_survival_curves --plot --xtick-year-only --max-xticks 10 --marker-size 1.0 --marker-every 4 --plot-smooth-window 5 --fig-width 7 --fig-height 3.5
+
+# Example (single line):
+# python -m survival_new_data.distill.scripts.predict_survival_curve_all --model student --checkpoint checkpoints_hsk_distill/student_best.pt --data-dir /nvme01/gvm0/hsk/data --time-step quarter --out-dir plots_survival_curves --plot --xtick-year-only --max-xticks 10 --marker-size 1.0 --marker-every 4 --plot-smooth-window 5 --fig-width 7 --fig-height 3.5
 from __future__ import annotations
 
 import argparse
@@ -168,7 +170,11 @@ def _load_bert_vectors_for_review_ids(review_ids: List[str], *, data_dir: Option
 def _load_img_vectors_for_review_ids(review_ids: List[str], *, data_dir: Optional[Path], img_dim: int) -> Optional[pd.DataFrame]:
     path = resolve_data_path("review_img_emb.parquet", data_dir=data_dir)
     if not path.exists():
-        return None
+        parts_dir = Path(str(path.with_suffix("")) + ".parts")
+        if parts_dir.exists() and parts_dir.is_dir():
+            path = parts_dir
+        else:
+            return None
 
     cols = ["review_id"] + [f"img_emb_{i}" for i in range(int(img_dim))]
     filt = _field_str("review_id").isin([str(x) for x in review_ids])

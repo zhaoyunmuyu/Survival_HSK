@@ -89,6 +89,30 @@ def prepare_dataloaders_kd(batch_size: int = 64, limit_restaurants: int | None =
     review_df = review_df[review_df["restaurant_id"].isin(required_ids)]
     review_df = prepare_review_dataframe(review_df)
 
+    # Rule: exclude restaurants with <3 distinct review years (train/val/test all apply).
+    year_counts = (
+        pd.DataFrame({"restaurant_id": review_df["restaurant_id"].astype(str), "review_year": review_df["review_year"].astype(int)})
+        .query("review_year > 0")
+        .groupby("restaurant_id", sort=False)["review_year"]
+        .nunique()
+    )
+    valid_restaurant_ids = set(year_counts[year_counts >= 3].index.astype(str))
+    before = (len(train_df), len(val_df), len(test_df))
+    train_df = train_df[train_df["restaurant_id"].isin(valid_restaurant_ids)].copy()
+    val_df = val_df[val_df["restaurant_id"].isin(valid_restaurant_ids)].copy()
+    test_df = test_df[test_df["restaurant_id"].isin(valid_restaurant_ids)].copy()
+    review_df = review_df[review_df["restaurant_id"].isin(valid_restaurant_ids)].copy()
+    after = (len(train_df), len(val_df), len(test_df))
+    LOGGER.info(
+        "[KD] Filter restaurants by review years >=3: train %d->%d, val %d->%d, test %d->%d",
+        before[0],
+        after[0],
+        before[1],
+        after[1],
+        before[2],
+        after[2],
+    )
+
     LOGGER.info("[KD] Loading macro-economic data ...")
     with open(_resolve_data_file("normalized_macro_data.json"), "r", encoding="utf-8") as handle:
         macro_raw = json.load(handle)

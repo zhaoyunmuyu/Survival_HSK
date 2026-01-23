@@ -1,0 +1,128 @@
+# Common discourse / filler tokens in this corpus (OpenRice reviews; mixed Chinese + Cantonese).
+# One token per line. Lines starting with # are ignored by scripts.
+#
+# Usage examples:
+#   python scripts/tfidf.py --stopwords stopwords/zh_hk_discourse.txt ...
+#   python scripts/topic_model.py --stopwords stopwords/zh_hk_discourse.txt ...
+#   python scripts/bertopic_model.py --stopwords stopwords/zh_hk_discourse.txt ...
+
+# 因果/转折/连接
+因为
+因為
+所以
+不过
+不過
+而且
+但是
+然後
+然后
+其實
+其实
+如果
+結果
+结果
+於是
+于是
+反而
+或者
+以及
+另外
+
+# 还有/还是（繁体常见）
+還有
+還是
+
+# 否定/判断（口语）
+不是
+不會
+不会
+冇
+沒
+没有
+沒有
+無
+唔
+唔會
+唔係
+
+# 代词/指示词
+我們
+我哋
+我地
+佢哋
+佢地
+你哋
+你地
+大家
+自己
+這個
+这个
+呢個
+呢間
+這裡
+这里
+那裡
+那里
+
+# 时间/顺序
+之前
+之後
+之后
+已經
+已经
+時間
+时间
+分鐘
+分钟
+一次
+
+# 程度/情绪（常见但信息量低，可按需启用/删减）
+真係
+真的
+非常
+十分
+有點
+有点
+一點
+一点
+少少
+好多
+很多
+
+# 常见结构词（容易在 2-gram 分词里占比很高）
+就是
+就係
+是一
+的是
+了一
+都係
+都好
+都唔
+都幾
+
+# 观点表达（可按任务决定是否过滤）
+覺得
+觉得
+感覺
+感觉
+
+# 可选：常见泛化词（如需更“内容词”可去掉注释）
+可以
+
+# 你指定要额外过滤的高频泛化词
+一個
+一个
+餐廳
+餐厅
+不錯
+不错
+比較
+比较
+雖然
+虽然
+見到
+加上
+有一
+都有
+一定
+第一
