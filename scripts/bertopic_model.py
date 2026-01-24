@@ -147,8 +147,20 @@ class JiebaTokenizer(Tokenizer):
         return [t.strip() for t in self._jieba.lcut(text, HMM=True) if t and t.strip()]
 
 
+class PyCantoneseTokenizer(Tokenizer):
+    def __init__(self) -> None:
+        import pycantonese as pc  # type: ignore
+
+        self._pc = pc
+
+    def tokenize(self, text: str) -> list[str]:
+        return [str(t).strip() for t in self._pc.segment(text) if str(t).strip()]
+
+
 def build_tokenizer(mode: str, char_ngram: int) -> Tokenizer:
     mode = mode.lower().strip()
+    if mode in {"pycantonese", "cantonese"}:
+        return PyCantoneseTokenizer()
     if mode == "regex":
         return RegexTokenizer()
     if mode == "char":
@@ -157,9 +169,12 @@ def build_tokenizer(mode: str, char_ngram: int) -> Tokenizer:
         return JiebaTokenizer()
     if mode == "auto":
         try:
-            return JiebaTokenizer()
+            return PyCantoneseTokenizer()
         except Exception:
-            return CharNgramTokenizer(n=char_ngram)
+            try:
+                return JiebaTokenizer()
+            except Exception:
+                return CharNgramTokenizer(n=char_ngram)
     raise ValueError(f"Unknown tokenizer mode: {mode}")
 
 
@@ -298,7 +313,11 @@ def main(argv: list[str]) -> int:
     p.add_argument("--text-cols", nargs="+", default=["review_text"])
     p.add_argument("--encoding", default="utf-8")
     p.add_argument("--chunksize", type=int, default=50_000)
-    p.add_argument("--tokenizer", choices=["auto", "jieba", "char", "regex"], default="auto")
+    p.add_argument(
+        "--tokenizer",
+        choices=["auto", "pycantonese", "cantonese", "jieba", "char", "regex"],
+        default="auto",
+    )
     p.add_argument("--char-ngram", type=int, default=2)
     p.add_argument("--stopwords", type=Path, default=None)
     p.add_argument("--no-default-stopwords", action="store_true")

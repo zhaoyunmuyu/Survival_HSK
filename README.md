@@ -15,6 +15,7 @@ python scripts/word_frequency.py --input-dir final_review_data --text-cols revie
 
 - 输出：`artifacts/word_freq/by_file/*_top.csv`（按文件）与 `artifacts/word_freq/by_group/*_top.csv`（按类别聚合）
 - 分词：默认 `--tokenizer auto`（若安装了 `jieba` 会优先用；否则使用中文 2-gram 回退）
+- 分词（更新）：`--tokenizer auto` 现在优先使用 `pycantonese`（粤语分词，若已安装），其次 `jieba`，最后回退到中文 2-gram
 - 可选：`pip install jieba` 后用 `--tokenizer jieba` 得到更接近“词”的统计结果
 
 ## TF-IDF（final_review_data）
@@ -50,3 +51,4 @@ python scripts/bertopic_model.py --input-dir final_review_data --text-cols revie
 
 - 输出：`artifacts/topics/bertopic/by_file/*_topics.csv`（主题词）与 `artifacts/topics/bertopic/by_file/*_info.csv`（主题概览）
 - 依赖：需要额外安装 `bertopic` / `sentence-transformers` / `umap-learn`
+- 粤语分词：建议 `pip install pycantonese`，然后用 `--tokenizer pycantonese`（或保持 `auto`）

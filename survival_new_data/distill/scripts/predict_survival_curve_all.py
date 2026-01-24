@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Iterable, List, Literal, Optional, Tuple
@@ -385,6 +386,18 @@ def parse_args() -> argparse.Namespace:
 
     p.add_argument("--max-restaurants", type=int, default=None, help="调试用：最多处理多少家店")
     p.add_argument("--skip-existing", action="store_true", help="若输出文件已存在则跳过（默认开启）")
+    p.add_argument(
+        "--progress-every",
+        type=int,
+        default=200,
+        help="每处理多少家店打印一次进度（0=禁用；默认200）",
+    )
+    p.add_argument(
+        "--progress-every-s",
+        type=float,
+        default=30.0,
+        help="每隔多少秒打印一次进度（0=禁用；默认30秒）",
+    )
 
     # 画图参数（与 predict_survival_curve 对齐）
     p.add_argument("--plot", action="store_true", help="输出 PNG 折线图")
@@ -523,14 +536,28 @@ def main() -> None:
     y_key = "prob_survival" if args.plot_y == "survival" else "prob_closed"
     processed = 0
     failed = 0
+    skipped = 0
+    started = time.time()
+    last_log_t = started
+    last_log_n = 0
+
+    print(
+        f"[HSK][PredictAll] start model={args.model} device={device.type} time_step={time_step} "
+        f"plot={bool(args.plot)} y={y_key} out_dir={out_dir}"
+    )
 
     for split, ids_path in split_files:
         ids = _read_ids_file(ids_path)
+        split_total = len(ids)
         split_out = out_dir / split
         split_out.mkdir(parents=True, exist_ok=True)
+        split_seen = 0
+
+        print(f"[HSK][PredictAll] split={split} ids={split_total} ids_file={ids_path}")
 
         for rid in ids:
             processed += 1
+            split_seen += 1
             if args.max_restaurants is not None and processed > int(args.max_restaurants):
                 break
 
@@ -538,6 +565,7 @@ def main() -> None:
             out_png = split_out / f"survival_curve_{rid}.png"
 
             if args.skip_existing and out_csv.exists() and (not args.plot or out_png.exists()):
+                skipped += 1
                 continue
 
             try:
@@ -583,10 +611,32 @@ def main() -> None:
                 if failed <= 20:
                     print(f"[WARN] failed split={split} restaurant_id={rid}: {exc}")
 
+            # progress
+            now = time.time()
+            should_log_n = int(args.progress_every) > 0 and (processed - last_log_n) >= int(args.progress_every)
+            should_log_t = float(args.progress_every_s) > 0 and (now - last_log_t) >= float(args.progress_every_s)
+            if should_log_n or should_log_t:
+                elapsed = max(1e-9, now - started)
+                rate = processed / elapsed
+                split_pct = (split_seen / split_total * 100.0) if split_total else 0.0
+                remaining = (split_total - split_seen) if split_total else 0
+                eta_s = (remaining / max(1e-9, rate)) if rate > 0 else 0.0
+                print(
+                    f"[HSK][PredictAll] progress split={split} {split_seen}/{split_total} ({split_pct:.1f}%) "
+                    f"processed={processed} skipped={skipped} failed={failed} "
+                    f"rate={rate:.2f} r/s eta~{eta_s/60.0:.1f}m"
+                )
+                last_log_t = now
+                last_log_n = processed
+
         if args.max_restaurants is not None and processed > int(args.max_restaurants):
             break
 
-    print(f"DONE processed={processed} failed={failed} out_dir={out_dir}")
+    elapsed = max(1e-9, time.time() - started)
+    print(
+        f"[HSK][PredictAll] DONE processed={processed} skipped={skipped} failed={failed} "
+        f"elapsed={elapsed/60.0:.1f}m out_dir={out_dir}"
+    )
 
 
 if __name__ == "__main__":

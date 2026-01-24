@@ -12,3 +12,6 @@ PyYAML==6.0.2
 
 # Mamba 教师模型（建议 Linux/GPU 环境）
 mamba-ssm; platform_system != "Windows"
+
+# Optional: Cantonese tokenizer (PyCantonese) for `--tokenizer pycantonese` / auto preference.
+# pycantonese>=3.4.0

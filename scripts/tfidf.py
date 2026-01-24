@@ -151,8 +151,23 @@ class JiebaTokenizer(Tokenizer):
                 yield tok
 
 
+class PyCantoneseTokenizer(Tokenizer):
+    def __init__(self) -> None:
+        import pycantonese as pc  # type: ignore
+
+        self._pc = pc
+
+    def tokenize(self, text: str) -> Iterable[str]:
+        for tok in self._pc.segment(text):
+            tok = str(tok).strip()
+            if tok:
+                yield tok
+
+
 def build_tokenizer(mode: str, char_ngram: int) -> Tokenizer:
     mode = mode.lower().strip()
+    if mode in {"pycantonese", "cantonese"}:
+        return PyCantoneseTokenizer()
     if mode == "regex":
         return RegexTokenizer()
     if mode == "char":
@@ -161,9 +176,12 @@ def build_tokenizer(mode: str, char_ngram: int) -> Tokenizer:
         return JiebaTokenizer()
     if mode == "auto":
         try:
-            return JiebaTokenizer()
+            return PyCantoneseTokenizer()
         except Exception:
-            return CharNgramTokenizer(n=char_ngram)
+            try:
+                return JiebaTokenizer()
+            except Exception:
+                return CharNgramTokenizer(n=char_ngram)
     raise ValueError(f"Unknown tokenizer mode: {mode}")
 
 
@@ -312,9 +330,9 @@ def main(argv: list[str]) -> int:
     p.add_argument("--chunksize", type=int, default=50_000)
     p.add_argument(
         "--tokenizer",
-        choices=["auto", "jieba", "char", "regex"],
+        choices=["auto", "pycantonese", "cantonese", "jieba", "char", "regex"],
         default="auto",
-        help="Tokenization mode. auto=jieba if installed else char n-gram.",
+        help="Tokenization mode. auto=pycantonese if installed else jieba else char n-gram.",
     )
     p.add_argument("--char-ngram", type=int, default=2, help="Used when tokenizer=char/auto fallback")
     p.add_argument("--stopwords", type=Path, default=None, help="Optional stopwords file, one per line")
@@ -395,4 +413,3 @@ def main(argv: list[str]) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main(sys.argv[1:]))
-
